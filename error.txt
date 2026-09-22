@@ -1,0 +1,18 @@
+WARNING:torchao:Failed to load /usr/local/lib/python3.13/dist-packages/torchao/_C_cutlass_90a.abi3.so: Could not load this library: /usr/local/lib/python3.13/dist-packages/torchao/_C_cutlass_90a.abi3.so
+WARNING:torchao:Failed to load /usr/local/lib/python3.13/dist-packages/torchao/_C_mxfp8.cpython-310-x86_64-linux-gnu.so: Could not load this library: /usr/local/lib/python3.13/dist-packages/torchao/_C_mxfp8.cpython-310-x86_64-linux-gnu.so
+/usr/local/lib/python3.13/dist-packages/unsloth/__init__.py:1568: UserWarning: WARNING: Unsloth should be imported before [trl, transformers, peft] to ensure all optimizations are applied. Your code may run slower or encounter memory issues without these optimizations.
+
+Please restructure your imports with 'import unsloth' at the top of your file.
+  from ._gpu_init import *
+🦥 Unsloth: Will patch your computer to enable 2x faster free finetuning.
+🦥 Unsloth Zoo will now patch everything to make training faster!
+---------------------------------------------------------------------------
+NameError                                 Traceback (most recent call last)
+/tmp/ipykernel_899/875439267.py in <cell line: 0>()
+     77 # inference time (registry.get_ollama_tools()) - see the note by
+     78 # _format_example below for why this matters.
+---> 79 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+     80 import assistant.tools  # noqa: E402,F401 - registers every tool
+     81 from assistant.tools.registry import registry  # noqa: E402
+
+NameError: name '__file__' is not defined

@@ -1,0 +1,37 @@
+# Copy this file to config.yaml and adjust as needed. config.yaml is gitignored.
+
+llm:
+  host: "http://localhost:11434"
+  model: "qwen2.5:7b-instruct"
+
+activation:
+  mode: "continuous"     # "continuous" | "hotkey" | "wakeword" (wakeword arrives at M5)
+  hotkey: "ctrl+alt+j"   # only used in "hotkey" mode
+  wake_phrase: "hey_jarvis"
+  record_seconds: 5.0    # only used in "hotkey" mode
+
+listening:                # only used in "continuous" mode
+  vad_aggressiveness: 2   # 0 (least strict) - 3 (most strict) voice-activity filtering
+  silence_duration_ms: 900  # silence needed after speech to end an utterance
+  max_utterance_seconds: 20.0
+  preroll_ms: 300          # rolling lookback so soft-onset words aren't clipped at utterance start
+
+tts:
+  rate: 210   # pyttsx3 words-per-minute; 210 = 1.2x the original 175 default
+
+stt:
+  whisper_model_size: "base"  # multilingual model - needed for Hinglish; base.en can't produce Hindi tokens
+  language: "en"               # keeps output in Roman script (how Hinglish is normally typed); try "hi" as an alternative
+
+speaker_verification:
+  enabled: false          # turned on at M4, once a voice profile has been enrolled
+  similarity_threshold: 0.75
+
+files:
+  safe_roots:
+    - "~/Desktop"
+    - "~/Documents"
+    - "~/Downloads"
+
+logging:
+  level: "INFO"

@@ -1,0 +1,44 @@
+# Core (needed from M0/M1 onward)
+ollama
+pydantic
+PyYAML
+psutil
+
+# M2 tools
+AppOpener
+keyboard
+pycaw
+comtypes
+pywin32
+websocket-client  # CDP WebSocket for real browser page interaction (browser_automation.py)
+Pillow  # take_screenshot (system_control.py)
+
+# M3 - voice I/O
+sounddevice
+numpy
+faster-whisper
+pyttsx3
+webrtcvad-wheels  # provides the `webrtcvad` module; plain webrtcvad needs a C compiler on Windows
+
+# M4 - speaker verification (voice lock)
+resemblyzer
+
+# M5 - hands-free wake word
+openwakeword
+
+# Daily check-in (self_review/) - configurable check-in time, IST by default
+# tzdata: stdlib zoneinfo needs this on Windows specifically - Windows doesn't ship IANA
+# timezone data the way Linux/macOS do. Confirmed live: ZoneInfo("Asia/Kolkata") raised
+# ZoneInfoNotFoundError on this machine before installing it - not a hypothetical gap.
+tzdata
+
+# M6 - optional TTS upgrade (install later, not required for M1-M5)
+# piper-tts
+
+# Dev/testing
+pytest
+
+# Fine-tuning dataset validation only (scripts/validate_finetune_dataset.py) -
+# NOT needed for Vaayu's actual runtime, only to check the dataset against the
+# real tokenizer before spending Colab GPU time on it. Install manually if
+# using that script: pip install transformers jinja2
