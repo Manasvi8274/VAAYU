@@ -51,3 +51,11 @@ nvidia-cudnn-cu12==9.*
 
 # Speech-model evaluation only (scripts/stt_eval.py) - not needed to run Vaayu:
 # edge-tts (Indian-English test voices), soundfile, pyarrow (EdAcc corpus)
+
+# Internet answers (assistant/tools/web_answer.py): search results; weather uses Open-Meteo over httpx
+ddgs
+# Big-brother chat: Devanagari -> Roman letters if the model slips into Hindi script
+indic-transliteration
+
+# Training only (scripts/stt_finetune.py, scripts/train_llm_lora.py) - not needed to run Vaayu:
+# torch (CUDA build), transformers, peft, accelerate, bitsandbytes
