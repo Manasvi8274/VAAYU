@@ -101,16 +101,20 @@ def get_weather(place: str = "", day: str = "today") -> str:
     },
 )
 def answer_question(question: str) -> dict:
-    instant = {}
-    try:  # DuckDuckGo's instant answer: a one-line fact when it has one (often empty)
-        instant = _get_json("https://api.duckduckgo.com/", {"q": question, "format": "json", "no_html": 1,
-                                                             "skip_disambig": 1})
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(2) as pool:  # both at once: the search alone takes 3-5 s
+        # DuckDuckGo's instant answer: a one-line fact when it has one (often empty)
+        instant_job = pool.submit(_get_json, "https://api.duckduckgo.com/",
+                                  {"q": question, "format": "json", "no_html": 1, "skip_disambig": 1})
+        search_job = pool.submit(_ddg_text, question)
+    try:
+        instant = instant_job.result()
     except ConnectionError:
-        pass
+        instant = {}
     answer = str(instant.get("Answer") or "")[:300]
     abstract = str(instant.get("AbstractText") or "")[:300]
     try:
-        results = [{"title": r.get("title", ""), "snippet": (r.get("body") or "")[:220]} for r in _ddg_text(question)]
+        results = [{"title": r.get("title", ""), "snippet": (r.get("body") or "")[:220]} for r in search_job.result()]
     except ConnectionError:
         if not (answer or abstract):
             raise
