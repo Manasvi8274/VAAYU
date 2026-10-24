@@ -7,6 +7,7 @@ from AppOpener import close as app_close
 from AppOpener import open as app_open
 
 from assistant.tools import browser_state
+from guardian.rules import check_not_payment
 from assistant.tools.registry import registry
 from assistant.tools.window_utils import foreground_by_title
 
@@ -106,6 +107,7 @@ def _find_matching_process_name(app_name: str) -> str | None:
     },
 )
 def open_app(app_name: str, foreground: bool = True) -> str:
+    check_not_payment(app_name)
     resolved_name = _resolve_open_app_name(app_name)
     with _quiet_stdout():
         app_open(resolved_name, match_closest=True, output=True, throw_error=True)

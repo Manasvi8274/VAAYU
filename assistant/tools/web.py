@@ -5,6 +5,7 @@ from assistant.tools import browser_state
 from assistant.tools.browser import _activate_tab, _new_tab
 from assistant.tools.browser_automation import _send_cdp_command, _target_tab
 from assistant.tools.registry import registry
+from guardian.rules import check_not_payment
 
 # Longest first: " web site" ends with " site" too, so checking " site"
 # first would match it, produce a candidate with a leftover space ("google
@@ -54,6 +55,7 @@ _SITE_SUFFIXES = (" web site", " website", " site")
     },
 )
 def open_website(url_or_query: str, foreground: bool = True, same_tab: bool = False) -> str:
+    check_not_payment(url_or_query)
     text = url_or_query.strip()
 
     # "open the moviesmod website" -> treat the bare name as a domain

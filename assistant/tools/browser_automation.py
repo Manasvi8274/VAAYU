@@ -16,6 +16,7 @@ import websocket
 
 from assistant.tools.browser import _cdp_request, _list_tabs
 from assistant.tools.registry import registry
+from guardian.rules import check_not_payment
 
 _CDP_TIMEOUT = 10
 
@@ -60,6 +61,7 @@ def _send_cdp_command(ws_url: str, method: str, params: dict | None = None) -> d
     },
 )
 def browse_to(url: str) -> str:
+    check_not_payment(url)
     if not url.startswith(("http://", "https://")):
         url = "https://" + url
     tab = _target_tab()

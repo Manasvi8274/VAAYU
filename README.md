@@ -134,6 +134,34 @@ fixed earlier. Both `Vaayu` and `Vayu` spellings are already accepted either way
   quieter/less clear speech. If a command like "type ..." isn't recognized, try again a bit louder
   and more clearly, or upgrade the Whisper model size in `stt/whisper_stt.py` for better accuracy.
 
+## Guardian and kill switches
+
+Start Vaayu through its guardian: `python -m guardian` (or `pythonw -m guardian` for no console).
+The guardian (`guardian/`, deliberately outside `assistant/` so Vaayu's self-upgrades can't edit it)
+starts Vaayu, restarts it if it crashes (at most 3 times in 10 minutes), and stops it completely on
+any of these — none of them depend on Vaayu's own code still working:
+
+| Kill path | How |
+|---|---|
+| **"Vaayu die"** | Said out loud. The guardian has its own mic listener and speech model. |
+| **Ctrl + Alt + Shift + F12** | Global hotkey. |
+| **"Kill Vaayu"** desktop shortcut | Runs `python -m guardian kill`, which kills the processes directly — works even if the guardian itself is stuck. |
+
+"Sleep Vaayu" is still Vaayu's own sleep (it keeps running); "Shutdown Vaayu" exits normally and the
+guardian stops with it. `python -m guardian status` shows what's running; events go to
+`data/guardian.log`.
+
+Also enforced from here: payment and banking apps/sites are blocked permanently
+(`guardian/rules.py`, checked by `open_app`, `open_website` and `browse_to`), and Vaayu is launched
+with Windows' `RunAsInvoker` mode, so programs it starts can't auto-elevate. Elevation always needs a
+human click on the UAC screen; any UAC prompt that appears while Vaayu runs is logged.
+
+Tested live on this laptop: crash → automatic restart, hotkey kill, shortcut kill, and a spoken
+"Vaayu die" kill. The speech side was also tested with real room noise mixed with "Vaayu die" at
+voice-level loudness: 23/24 caught, 0 false kills in 48 ordinary phrases. Speaker-to-mic self-tests
+aren't representative here — the laptop's mic array cancels its own speaker output. If "Vaayu die"
+misses for your real voice, `_SPEECH_OVER_FLOOR` in `guardian/core.py` is the knob.
+
 ## Auto-start (runs at every login)
 
 A Windows Scheduled Task named **"Vaayu Assistant"** is registered to run `assistant.voice_main`

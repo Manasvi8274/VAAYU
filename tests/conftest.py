@@ -66,3 +66,15 @@ def _no_real_cdp_calls(monkeypatch):
         raise ConnectionError("no debugged browser (test default)")
 
     monkeypatch.setattr(web, "_new_tab", _no_cdp_browser)
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _no_real_radio_queries():
+    # get_network_status's Bluetooth check asks the real Windows radio via
+    # PowerShell (~1.5 s each) - older tests that only mock _run would hit
+    # real hardware. Default to "On" once per session (a per-test fixture
+    # costs more than it saves, see above); radio tests patch it themselves.
+    from assistant.tools import network_status
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(network_status, "_radio_ps", lambda kind, state: "On")
+        yield
