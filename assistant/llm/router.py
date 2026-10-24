@@ -104,6 +104,18 @@ _REFUSE = [
      "I don't delete or format files - that's something you should do yourself."),
     (re.compile(r"^(?:install|uninstall|download and install)\b", re.I),
      "I can't install or uninstall software yet."),
+    # Capabilities Vaayu has no tool for - a plain "can't" instead of the
+    # model's nearest-looking guess (benchmark: "turn on the lights" ->
+    # Wi-Fi on, "send an email to my boss" -> opened Outlook).
+    (re.compile(r"\b(?:turn|switch) (?:on|off) (?:the |my )?(?:lights?|fans?|ac|air conditioner|tv|geyser)\b|"
+                r"\b(?:lights?|fans?|ac|tv|geyser) (?:on|off|band|chalu) (?:karo|kar do)\b", re.I),
+     "I can't control lights or home appliances - I only work on this laptop."),
+    (re.compile(r"\b(?:send|write|compose|draft) (?:an? )?e-?mail\b|\be-?mail (?:to|my)\b", re.I),
+     "I can't send emails yet."),
+    (re.compile(r"^(?:call|phone|dial|ring|make a (?:phone )?call)\b|\bko (?:call|phone) (?:karo|kar do|lagao)\b", re.I),
+     "I can't make phone calls."),
+    (re.compile(r"\b(?:set|create) (?:an? )?(?:alarm|timer|reminder)\b|\balarm (?:laga|set) (?:do|karo)\b", re.I),
+     "I can't set alarms or timers yet - I can save a note instead."),
     (re.compile(r"\b(?:paytm|phonepe|phone pe|gpay|google pay|upi|bhim|send money|transfer money|transfer \d+|"
                 r"pay \d+|pay (?:rs|rupees|money)|make (?:a )?payment|net ?banking|bank account|credit card|debit card)\b"
                 r"|\bpay (?:my |the )?\w* ?bill\b", re.I),
@@ -187,7 +199,11 @@ WHATSAPP_HOWTO = ("I only send WhatsApp messages when you say the chat and the m
                   "send hello to SAVED MESSAGES on WhatsApp.")
 # Tools the model may never call on its own - their arguments must come
 # from the user's exact words via fast_route, or the request is refused.
-_LLM_BLOCKED_TOOLS = {"send_whatsapp_message": WHATSAPP_HOWTO}
+_LLM_BLOCKED_TOOLS = {
+    "send_whatsapp_message": WHATSAPP_HOWTO,
+    # Benchmark: "turn on the lights" -> the model chose set_radio(wifi, on).
+    "set_radio": "Say it directly, like: turn wifi off, or turn bluetooth on.",
+}
 
 _SMALL_TALK = [
     (re.compile(r"^(?:thanks|thank you|thank you so much|thanks a lot|shukriya|dhanyavaad|thnx)$", re.I), "You're welcome!"),
@@ -332,6 +348,10 @@ def fast_route(text: str):
     command, or None to fall back to the LLM. Deliberately conservative:
     a miss only costs LLM latency, a wrong hit does the wrong thing."""
     t = normalize(text)
+    # A whole-utterance WhatsApp send is checked before the refusals, so a
+    # message that merely mentions e.g. "call" or "email" still goes out.
+    if (one := _route_one(t)) and one[0] == "tool" and one[1] == "send_whatsapp_message":
+        return ("tools", [one[1:]])
     for pattern, reply in _REFUSE:  # whole utterance, before splitting: "open phonepe and send money"
         if pattern.search(t):
             return ("reply", reply)

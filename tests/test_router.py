@@ -198,3 +198,26 @@ def test_repair_arguments_renames_a_single_misnamed_required_argument():
     from assistant.tools.registry import repair_arguments
     spec = registry._tools["open_website"]
     assert repair_arguments(spec, {"url": "github.com"}) == {"url_or_query": "github.com"}
+
+
+@pytest.mark.parametrize(
+    "text", ["turn on the lights", "switch off the fan", "send an email to my boss", "call mom", "set an alarm for 6 am"])
+def test_unsupported_capabilities_get_a_plain_cant(text):
+    kind, reply = router.fast_route(text)
+    assert kind == "reply" and "can't" in reply
+
+
+def test_whatsapp_message_mentioning_call_or_email_is_still_sent():
+    assert router.fast_route("send call me after the email to SAVED MESSAGES on whatsapp") == ("tools", [
+        ("send_whatsapp_message", {"contact_name": "SAVED MESSAGES", "message": "call me after the email"})])
+
+
+def test_model_cannot_toggle_radios_on_its_own():
+    with patch("assistant.llm.ollama_client.ollama.Client"):
+        brain = OllamaBrain(host="http://fake", model="m")
+    brain.client = MagicMock()
+    brain.client.chat.return_value = {"message": {"role": "assistant", "content": "", "tool_calls": [
+        {"function": {"name": "set_radio", "arguments": {"kind": "wifi", "state": "on"}}}]}}
+    with patch.object(type(registry), "dispatch") as dispatch:
+        brain.respond([{"role": "user", "content": "brighten things up in here"}], registry)
+    dispatch.assert_not_called()
