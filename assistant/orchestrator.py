@@ -80,7 +80,10 @@ def _save_audio(audio) -> str | None:
         import wave
         import numpy as np
         _AUDIO_DIR.mkdir(parents=True, exist_ok=True)
-        path = _AUDIO_DIR / f"{datetime.now().strftime('%Y%m%d_%H%M%S_%f')[:-3]}.wav"
+        stamp = datetime.now().strftime('%Y%m%d_%H%M%S_%f')
+        path, n = _AUDIO_DIR / f"{stamp}.wav", 1
+        while path.exists():  # Windows' clock can repeat a timestamp - never overwrite a clip
+            path, n = _AUDIO_DIR / f"{stamp}_{n}.wav", n + 1
         pcm = np.clip(np.asarray(audio, dtype=np.float32), -1, 1)
         with wave.open(str(path), "wb") as w:
             w.setnchannels(1)

@@ -126,7 +126,9 @@ def _route_key(text):
         return None
     if r[0] == "reply":
         return ("reply", r[1][:12])
-    return tuple((n, tuple(sorted((k, str(v).lower()) for k, v in a.items()))) for n, a in r[1])
+    from assistant.tools import names  # Vaayu corrects known names the same way before acting
+    return tuple((n, tuple(sorted((k, str(v).lower()) for k, v in names.correct_arguments(n, a).items())))
+                 for n, a in r[1])
 
 
 def _load_cuda_dlls():
@@ -152,7 +154,7 @@ def run(specs):
         audios[it["path"]] = decode_audio(it["path"], sampling_rate=16000)
     report = {}
     for spec in specs:
-        name, device = spec.split(":")
+        name, device = spec.rsplit(":", 1)  # name may be a local model folder
         model = WhisperModel(name, device=device, compute_type="int8_float16" if device == "cuda" else "int8")
         rows = []
         for it in items:
