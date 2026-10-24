@@ -33,7 +33,9 @@ OUT = Path(__file__).resolve().parents[1] / "data" / "datasets" / "llm_distill"
 if ".claude" in OUT.parts:  # built from a worktree: write to the main checkout's data/
     OUT = Path(*OUT.parts[:OUT.parts.index(".claude")]) / "data" / "datasets" / "llm_distill"
 PHRASE_PROMPT = ("Answer the user's question in one or two short spoken sentences "
-                 "using only this tool result. No markdown.")  # = OllamaBrain._phrase_result
+                 "using only this tool result - state the answer directly. No markdown. "
+                 "Reply in the same language as the question: English, or Hinglish "
+                 "written in Roman letters.")  # = OllamaBrain._phrase_result
 SEED = 13
 
 
@@ -819,8 +821,8 @@ def refusal_examples():
 
 
 # ------------------------------------------------------------------------------------------------ web
-def _r(*rows):
-    return {"results": [{"title": t, "body": b, "href": h} for t, b, h in rows]}
+def _r(*rows):  # = web_answer.answer_question's result shape
+    return {"question": "", "instant_answer": "", "results": [{"title": t, "snippet": b[:220]} for t, b, _h in rows]}
 
 
 WEB = [  # (question, result, answer). Snippets are the source of truth - the skill is reading them, not recall.
@@ -955,7 +957,7 @@ WRAP_HI = ["zara batao {q}", "{q}, pata hai?", "vaayu, {q}", "ek baat batao, {q}
 
 def web_examples(rng):
     out = []
-    for name, rows in (("answer_question", WEB), ("get_weather", WEATHER)):
+    for name, rows in (("answer_question", WEB),):  # get_weather's string is spoken as-is, never phrased
         for q, result, answer in rows:
             wraps = WRAP_HI if _HINGLISH.search(q) else WRAP_EN
             for asked in [q] + [w.format(q=q) for w in rng.sample(wraps, 2)]:  # same answer, other phrasings

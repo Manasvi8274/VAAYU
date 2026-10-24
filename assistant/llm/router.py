@@ -706,9 +706,27 @@ def select_tools(text: str, registry: ToolRegistry, k: int = 5) -> ToolRegistry:
         score = 3 * len(query & name_words) + len(query & desc_words) / (1 + len(desc_words) ** 0.5)
         scored.append((score, name))
     scored.sort(key=lambda x: -x[0])
+    picked = [name for _score, name in scored[:k]]
+    # Word overlap alone missed the needed tool in 75 of 417 distill examples
+    # (open_app 27, close_app 13...) - the model can't call a tool it isn't shown.
+    lowered = normalize(text).lower()
+    for pattern, tool in _MUST_OFFER:
+        if tool in registry._tools and tool not in picked and pattern.search(lowered):
+            picked = [tool] + picked[:k - 1]
     subset = ToolRegistry()
-    subset._tools = {name: registry._tools[name] for _score, name in scored[:k]}
+    subset._tools = {name: registry._tools[name] for name in picked}
     return subset
+
+
+_MUST_OFFER = [(re.compile(p), tool) for p, tool in [
+    (r"\b(?:open|launch|start|run|fire up|boot up|pull up|bring up|kholo|khol|kholna|chalu|on karo|i need|"
+     r"i wanna use|i want to use|get me into)\b|\bget .+ up\b", "open_app"),
+    (r"\b(?:close|quit|exit|shut|kill|band|hata|hatao|off my screen|finished with|done with)\b", "close_app"),
+    (r"\b(?:play|song|songs|gaana|gana|music|youtube)\b", "play_video_on_youtube"),
+    (r"\b(?:volume|sound|awaa?z|pause|resume|next|previous|mute|unmute|louder|quieter|dheere|gaana|aage wala)\b",
+     "control_media"),
+    (r"\b(?:press|shortcut|ctrl|alt|undo|copy|paste|save)\b", "press_hotkey"),
+]]
 
 
 # Action tools whose result string already says what happened - spoken
