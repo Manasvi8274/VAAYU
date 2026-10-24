@@ -2,7 +2,7 @@
 
 llm:
   host: "http://localhost:11434"
-  model: "qwen3.5:4b-q4_K_M"
+  model: "vaayu-finetuned"
 
 activation:
   mode: "continuous"     # "continuous" | "hotkey" | "wakeword" (wakeword arrives at M5)

@@ -8,7 +8,7 @@ from pydantic import BaseModel
 
 class LLMConfig(BaseModel):
     host: str = "http://localhost:11434"
-    model: str = "qwen3.5:4b-q4_K_M"
+    model: str = "vaayu-finetuned"
 
 
 class ActivationConfig(BaseModel):
