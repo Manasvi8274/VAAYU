@@ -81,6 +81,23 @@ def _gpu_free_mib() -> int:
         return 0
 
 
+def _resolve_model(model_size: str) -> str:
+    """A folder path (the fine-tuned model, scripts/stt_finetune.py) resolves
+    from the repo root; if it's missing, the stock model it was trained from."""
+    import os
+    if "/" not in model_size and "\\" not in model_size:
+        return model_size
+    from pathlib import Path
+    path = Path(model_size)
+    if not path.is_absolute():
+        path = Path(__file__).resolve().parent.parent.parent / path
+    if os.path.isfile(path / "model.bin"):
+        return str(path)
+    fallback = next((k for k in ("small", "base", "medium", "tiny") if k in path.name.lower()), "small")
+    print(f"Vaayu: speech model folder {path} not found - using the stock '{fallback}' model.")
+    return fallback
+
+
 class WhisperSTT:
     def __init__(
         self,
@@ -99,8 +116,10 @@ class WhisperSTT:
         # runtime is missing, instead of falling back.
         self.language = language
         self.device = "cpu"
+        model_size = _resolve_model(model_size)
         if device in ("auto", "cuda"):
-            need = _GPU_MIB.get(model_size, 1000) + _GPU_MARGIN_MIB
+            size = next((k for k in sorted(_GPU_MIB, key=len, reverse=True) if k in model_size.lower()), None)
+            need = _GPU_MIB.get(size, 1000) + _GPU_MARGIN_MIB
             if _gpu_free_mib() >= need:
                 try:
                     _load_cuda_libraries()
@@ -124,6 +143,8 @@ class WhisperSTT:
             initial_prompt=_VOCAB_PROMPT,
         )
         text = " ".join(segment.text.strip() for segment in segments).strip()
+        if text.isupper() and len(text) > 12:  # the fine-tune's EdAcc labels are ALL CAPS - it picked that up
+            text = text[0] + text[1:].lower()
 
         words = text.split()
         if len(words) < _MIN_WORDS and not (words and words[0].strip(".,!?").lower() in _ONE_WORD_COMMANDS):

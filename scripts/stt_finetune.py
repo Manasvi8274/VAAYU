@@ -26,6 +26,7 @@ OUT = ROOT / "data" / "datasets" / "stt_train"
 MODEL_OUT = ROOT / "models" / "whisper-small-vaayu"
 VOICES = ["hi-IN-SwaraNeural", "hi-IN-MadhurNeural"]
 RATES = ["-10%", "+0%", "+0%", "+15%"]
+PITCHES = ["-12Hz", "-6Hz", "+6Hz", "+12Hz"]
 
 NAME_TEMPLATES = [
     "open {c} on youtube", "{c} ki nayi video lagao", "play {c}'s newest video", "search {c} on youtube",
@@ -62,18 +63,18 @@ async def _tts_all(jobs, parallel=8):
     import edge_tts
     sem = asyncio.Semaphore(parallel)
 
-    async def one(text, voice, rate, path):
+    async def one(text, voice, rate, pitch, path):
         async with sem:
             for _ in range(3):
                 try:
-                    await edge_tts.Communicate(text, voice, rate=rate).save(str(path))
+                    await edge_tts.Communicate(text, voice, rate=rate, pitch=pitch).save(str(path))
                     return
                 except Exception:
                     await asyncio.sleep(2)
-    await asyncio.gather(*(one(*j) for j in jobs if not j[3].exists()))
+    await asyncio.gather(*(one(*j) for j in jobs if not j[4].exists()))
 
 
-def prepare():
+def prepare(rounds=1):
     import io
     import numpy as np
     import pyarrow.parquet as pq
@@ -89,11 +90,13 @@ def prepare():
         np.save(noise_path, noise[:, 0])
     rng = random.Random(7)
     items, jobs = [], []
-    for i, text in enumerate(_texts()):
-        for voice in VOICES:
-            path = OUT / "clips" / f"{i:04d}_{voice}.mp3"
-            jobs.append((text, voice, rng.choice(RATES), path))
-            items.append({"text": text, "path": str(path), "src": "tts"})
+    for r in range(1, rounds + 1):  # each extra round: other sentences, voices pitched as new pseudo-speakers
+        for i, text in enumerate(_texts(seed=99 + 1000 * (r - 1))):
+            for voice in VOICES:
+                path = OUT / "clips" / (f"{i:04d}_{voice}.mp3" if r == 1 else f"r{r}_{i:04d}_{voice}.mp3")
+                pitch = "+0Hz" if r == 1 else rng.choice(PITCHES)
+                jobs.append((text, voice, rng.choice(RATES), pitch, path))
+                items.append({"text": text, "path": str(path), "src": "tts"})
     asyncio.run(_tts_all(jobs))
     eval_speakers = {it["voice"] for it in json.loads((ROOT / "data/datasets/stt_eval/items.json").read_text())
                      if it["kind"] == "edacc"}
@@ -201,6 +204,7 @@ def train(epochs=2, batch=4, accum=4, lr=1e-4):
     hf_dir = OUT / "hf_model"
     merged.save_pretrained(hf_dir)
     proc.save_pretrained(hf_dir)
+    proc.feature_extractor.save_pretrained(hf_dir)  # transformers 5 writes processor_config.json; ct2 wants preprocessor_config.json
     import ctranslate2.converters
     ctranslate2.converters.TransformersConverter(
         str(hf_dir), copy_files=["tokenizer.json", "preprocessor_config.json"]
@@ -211,4 +215,4 @@ def train(epochs=2, batch=4, accum=4, lr=1e-4):
 
 if __name__ == "__main__":
     sys.stdout.reconfigure(encoding="utf-8")
-    {"prepare": prepare, "train": train}[sys.argv[1]]()
+    {"prepare": prepare, "train": train}[sys.argv[1]](*map(int, sys.argv[2:]))
