@@ -37,7 +37,7 @@ def test_fast_route_hits(text, expected):
         "open my notes file in documents",  # a file
         "close vaayu",  # the assistant itself, not an app
         "send it",  # no recipient/message to parse
-        "what is the capital of france",
+        "what's 25 times 4",  # maths stays with the model; world questions go online (test_web_answer.py)
         "",
     ],
 )

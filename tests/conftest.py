@@ -163,3 +163,17 @@ def _no_real_audio_saving():
         mp.setattr(orchestrator, "_real_save_audio", orchestrator._save_audio, raising=False)
         mp.setattr(orchestrator, "_save_audio", lambda audio: None)
         yield
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _no_real_internet_lookups():
+    # Questions now route to web_answer (weather, "who is the PM...") - the
+    # suite must never depend on the network. Web tests patch these per test.
+    from assistant.tools import web_answer
+
+    def offline(*args, **kwargs):
+        raise ConnectionError(web_answer._OFFLINE)
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(web_answer, "_get_json", offline)
+        mp.setattr(web_answer, "_ddg_text", offline)
+        yield

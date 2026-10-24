@@ -231,6 +231,27 @@ _INFO = [
 ]
 _QUESTION = re.compile(r"\b(is|are|am|what|what's|how|how's|which|kitni|kitna|kya|check|batao|status|level|hai|tell)\b", re.I)
 
+# Internet answers (tools/web_answer.py) - checked after every local rule, so
+# "what's playing", battery, tabs, notes, time/date never reach the web.
+_WEATHER = re.compile(r"\b(?:weather|temperature|mausam|forecast|humidity)\b|\bbaa?rish\b|\bhow (?:hot|cold|warm)\b|"
+                      r"\b(?:will it|is it|going to|gonna)\b.*\b(?:rain|snow|hot|cold|sunny)\b", re.I)
+_WEATHER_PLACE = re.compile(r"\b(?:in|at|of|for) (?:the )?(?P<p>[a-z][a-z .'-]*?)(?: (?:today|tomorrow|tonight|now|this week|kal|aaj))?$|"
+                            r"^(?:aaj |kal )?(?P<p2>[a-z][a-z .'-]*?) (?:ka|ki|me|mein|mai) (?:mausam|weather|temperature|baa?rish)", re.I)
+_NOT_A_PLACE = {"it", "today", "tomorrow", "outside", "here", "the day", "the week", "now", "aaj", "kal"}
+_KNOWLEDGE = re.compile(r"^(?:who|what|what's|whats|when|where|which|whose|why|how (?:many|much|old|far|tall|big|long|deep|"
+                        r"high|fast|to|does|do|did|is|are|was)|tell me about|kaun|kab|kahan|kitne|kitna|kitni)\b|"
+                        r"\b(?:kaun hai|kaun hain|kaun tha|kaun thi|kya hai|kab hai|kab tha|kahan hai)$", re.I)
+# Personal/opinion questions go to chat, questions about Vaayu or this laptop
+# stay local - only the outside world is looked up.
+_NOT_WEB = re.compile(r"\b(?:i|i'm|im|me|my|mine|myself|we|our|you|your|yours|yourself|you're|u|ur|mujhe|mujhko|mera|meri|"
+                      r"mere|main|hum|humara|tum|tumhara|tera|teri|aap|aapka|apna|apni|this|that|these|those|here|ye|yeh|"
+                      r"yah|iska|page|screen|windows?|tabs?|playing|open|opened|running|installed|connected|files?|folders?|"
+                      r"notes?|downloads|desktop|laptop|computer|pc|system|wi-?fi|bluetooth|battery|charge|cpu|ram|disk|"
+                      r"storage|volume|mic|microphone|speakers?|usb|displays?|monitors?|printers?|video|song|music|time|"
+                      r"vaayu|vayu)\b", re.I)
+_WEB_OK = re.compile(r"^tell me about |\b(?:this|next|last) (?:year|month|week|weekend|season|summer|winter)\b", re.I)
+_MATH = re.compile(r"\d\s*(?:times|plus|minus|into|divided by|multiplied by|x|\*|\+|-|/)\s*\d", re.I)
+
 _SCREENSHOT = re.compile(r"^(?:take|capture|grab|le lo|lo)?\s*(?:a )?(?:quick )?(?:screen ?shot|screen capture|ss)(?: (?:lo|le lo|lelo|karo))?$|"
                          r"^capture (?:the |my )?screen$|^screen ki (?:photo|picture|pic) (?:lo|le lo|khicho)$", re.I)
 _LOCK = re.compile(r"^lock(?: (?:my|the))? (?:computer|laptop|pc|screen|system)$|^(?:laptop|computer|pc|screen) lock (?:karo|kar do)$|"
@@ -498,6 +519,15 @@ def _route_one(t: str):
         for pattern, tool, args in _INFO:
             if pattern.search(t):
                 return ("tool", tool, dict(args))
+    if len(t.split()) <= 12 and _WEATHER.search(t) and not _NOT_WEB.search(t):
+        m = _WEATHER_PLACE.search(t)
+        place = ((m.group("p") or m.group("p2")) if m else "").strip()
+        args = {"place": "" if place.lower() in _NOT_A_PLACE else place}
+        if re.search(r"\b(?:tomorrow|kal)\b", t, re.I):
+            args["day"] = "tomorrow"
+        return ("tool", "get_weather", args)
+    if _KNOWLEDGE.search(t) and not _NOT_WEB.search(_WEB_OK.sub("", t)) and not _MATH.search(t):
+        return ("tool", "answer_question", {"question": t})
     for name, patterns in (("close_app", _CLOSE), ("open_app", _OPEN)):
         for pattern in patterns:
             m = pattern.match(t)
@@ -644,6 +674,9 @@ _SYNONYMS = {
     "update": "daily time", "check": "daily time", "password": "sensitive field",
     "window": "window", "minimize": "minimize window", "chhota": "minimize window", "website": "open website",
     "google": "open website search", "dikhao": "show open website", "spreadsheet": "files search",
+    "mausam": "weather", "temperature": "weather", "rain": "weather", "barish": "weather",
+    "who": "answer question", "kaun": "answer question", "president": "answer question",
+    "minister": "answer question", "capital": "answer question",
 }
 _WORD = re.compile(r"[a-z]+")
 _STOP = {"the", "a", "an", "to", "of", "on", "in", "is", "it", "and", "or", "for", "this", "that", "my",
@@ -686,7 +719,7 @@ DIRECT_REPLY_TOOLS = {
     "restore_window", "switch_to_window", "play_video_on_youtube", "play_latest_video_from_channel",
     "add_note", "set_video_volume", "set_video_fullscreen", "seek_video", "control_video_playback",
     "close_browser_tab", "switch_to_browser_tab", "type_text", "send_whatsapp_message",
-    "move_status_orb", "set_daily_update_time", "open_website", "get_system_status", "set_radio",
+    "move_status_orb", "set_daily_update_time", "open_website", "get_system_status", "set_radio", "get_weather",
 }
 
 

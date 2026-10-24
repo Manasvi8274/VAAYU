@@ -219,7 +219,9 @@ class OllamaBrain:
             model=self.model,
             messages=[
                 {"role": "system", "content": "Answer the user's question in one or two short spoken sentences "
-                                              "using only this tool result. No markdown."},
+                                              "using only this tool result - state the answer directly. No markdown. "
+                                              "Reply in the same language as the question: English, or Hinglish "
+                                              "written in Roman letters."},
                 {"role": "user", "content": f"Question: {user_text}\nResult of {name}: {result}"},
             ],
             keep_alive=_KEEP_ALIVE,

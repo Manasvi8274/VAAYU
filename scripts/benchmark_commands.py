@@ -422,15 +422,29 @@ def _relabel(cs):
         return [("control_media", {"action": "pause" if is_pause else "play"})]
     if cs["tool"] == "play_video_on_youtube" and re.match(r"^search youtube for ", cs["text"], re.I):
         return [want, ("youtube_control", {"action": "search"})]
+    # Third change, on request: questions about the world are looked up online (tools/web_answer.py)
+    # instead of answered from the model's memory or refused.
+    if cs["text"] in _NOW_LOOKED_UP:
+        return [_NOW_LOOKED_UP[cs["text"]]]
     return [want]
+
+
+_NOW_LOOKED_UP = {
+    "what is the capital of france": ("answer_question", {"question": "capital"}),
+    "how many days are in a leap year": ("answer_question", {"question": "leap"}),
+    "who is the prime minister of india": ("answer_question", {"question": "prime minister"}),
+    "who is virat kohli": ("answer_question", {"question": "kohli"}),
+    "what's the weather tomorrow": ("get_weather", {"day": "tomorrow"}),
+}
 
 
 def score(cs, calls):
     first = calls[0] if calls else None
-    if cs["tool"] is not None and first is not None:
+    wants = _relabel(cs)
+    if wants[0][0] is not None and first is not None:
         return any(first[0] == tool and all(str(v).lower() in str(first[1].get(k, "")).lower() for k, v in args.items())
-                   for tool, args in _relabel(cs))
-    if cs["tool"] is None:
+                   for tool, args in wants)
+    if wants[0][0] is None:
         return first is None
     if first is None or first[0] != cs["tool"]:
         return False

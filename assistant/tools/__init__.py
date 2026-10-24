@@ -18,6 +18,7 @@ from assistant.tools import (  # noqa: F401
     system_info,
     video_player,
     web,
+    web_answer,
     whatsapp,
     windows,
     youtube,
