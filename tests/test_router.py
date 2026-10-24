@@ -16,7 +16,7 @@ from assistant.tools.registry import registry  # noqa: E402
         ("whatsapp open kro", ("open_app", {"app_name": "whatsapp"})),
         ("chrome band karo", ("close_app", {"app_name": "chrome"})),
         ("close spotify", ("close_app", {"app_name": "spotify"})),
-        ("pause", ("control_media", {"action": "play_pause"})),
+        ("pause", ("control_media", {"action": "pause"})),
         ("next song", ("control_media", {"action": "next"})),
         ("volume badhao", ("control_media", {"action": "volume_up"})),
         ("turn down the volume", ("control_media", {"action": "volume_down"})),

@@ -17,6 +17,7 @@ the pre-router baseline on the same code.
 import argparse
 import json
 import random
+import re
 import sys
 import time
 from collections import defaultdict
@@ -411,8 +412,24 @@ def _stub_dispatch(self, name, arguments):
     return {"ok": True, "result": f"{name} done."}
 
 
+def _relabel(cs):
+    """Labels written before two deliberate behaviour changes (kept visible, not silently edited):
+    play/pause became explicit actions instead of one toggle, so "pause" can never START something;
+    and "search youtube for X" now shows results instead of auto-playing the first one."""
+    want = cs["tool"], dict(cs["args"])
+    if want == ("control_media", {"action": "play_pause"}):
+        is_pause = re.search(r"\b(pause|stop|roko|band|hold)\b", cs["text"], re.I)
+        return [("control_media", {"action": "pause" if is_pause else "play"})]
+    if cs["tool"] == "play_video_on_youtube" and re.match(r"^search youtube for ", cs["text"], re.I):
+        return [want, ("youtube_control", {"action": "search"})]
+    return [want]
+
+
 def score(cs, calls):
     first = calls[0] if calls else None
+    if cs["tool"] is not None and first is not None:
+        return any(first[0] == tool and all(str(v).lower() in str(first[1].get(k, "")).lower() for k, v in args.items())
+                   for tool, args in _relabel(cs))
     if cs["tool"] is None:
         return first is None
     if first is None or first[0] != cs["tool"]:

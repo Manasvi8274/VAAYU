@@ -33,6 +33,7 @@ mitigates this somewhat, since irrelevant audio only matters if it happens
 to contain "Vaayu" alongside a control word.
 """
 
+import time
 from datetime import datetime
 from enum import Enum
 from zoneinfo import ZoneInfo
@@ -48,6 +49,7 @@ from assistant.control_phrases import (
     has_command_content,
     is_affirmative,
     is_name_mentioned,
+    text_after_name,
 )
 from assistant.llm.ollama_client import OllamaBrain
 from assistant.llm.prompts import SYSTEM_PROMPT
@@ -62,8 +64,36 @@ from assistant.tts.pyttsx3_engine import Pyttsx3Engine
 # Conversation memory sent to the model: the last few turns only. Unbounded
 # history made every LLM call slower over a session, and stale turns ("why
 # did you not open youtube?") confused fresh commands.
-_HISTORY_USER_TURNS = 4
+_HISTORY_USER_TURNS = 2  # this turn + the one before (enough to answer "which one?")
 _SAMPLE_RATE = 16000
+
+
+# While the laptop is playing sound, the mic hears it: found live, Vaayu
+# acted on a YouTube video's own speech ("Today's episode is sponsored by
+# the Great Courses Plus" -> seek backward). So while sound is playing, only
+# sentences containing Vaayu's name count, and only the words after it. A
+# bare "Vaayu" opens a short window where the next sentence counts without it.
+_MEDIA_PEAK_THRESHOLD = 0.01  # calibration knob: Windows output meter peak (0-1) that counts as "playing"
+_NAME_WINDOW_SECONDS = 8
+_meter = None
+
+
+def _media_playing() -> bool:
+    global _meter
+    try:
+        if _meter is None:
+            from comtypes import CLSCTX_ALL
+            from pycaw.pycaw import AudioUtilities, IAudioMeterInformation
+            dev = AudioUtilities.GetSpeakers()._dev
+            _meter = dev.Activate(IAudioMeterInformation._iid_, CLSCTX_ALL, None).QueryInterface(IAudioMeterInformation)
+        peak = 0.0
+        for _ in range(5):  # ~0.2 s - one reading can land in a quiet gap
+            peak = max(peak, _meter.GetPeakValue())
+            time.sleep(0.04)
+        return peak > _MEDIA_PEAK_THRESHOLD
+    except Exception:
+        _meter = None
+        return False
 
 
 class State(Enum):
@@ -96,6 +126,7 @@ class Orchestrator:
         self.tts = Pyttsx3Engine(rate=config.tts.rate)
         self.brain = OllamaBrain(host=config.llm.host, model=config.llm.model)
         self.messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+        self._name_window_until = 0.0
 
     def _capture_utterance(self):
         if self.continuous:
@@ -235,6 +266,7 @@ class Orchestrator:
                 self._speak("Going to sleep. Say Vaayu when you need me.")
             return
 
+        woke_with_command = False
         if self.state is State.SLEEPING:
             if not is_name_mentioned(text):
                 interaction_log.log_event("ignored_sleeping", text=text)
@@ -244,9 +276,28 @@ class Orchestrator:
                 # bare "wake up Vaayu" / "Vaayu" - nothing else to act on
                 print("Vaayu: Yes? I'm listening.")
                 self._speak("Yes? I'm listening.")
+                self._name_window_until = time.time() + _NAME_WINDOW_SECONDS
                 return
             # else: "Vaayu, open brave" style - wake AND handle the attached
             # command in this same turn, falling through below.
+            woke_with_command = True
+            text = text_after_name(text) or text
+
+        if self.state is State.AWAKE and not woke_with_command and _media_playing():
+            if time.time() < self._name_window_until:
+                self._name_window_until = 0.0  # this sentence was invited by a bare "Vaayu"
+            elif not is_name_mentioned(text):
+                interaction_log.log_event("ignored_media", text=text)
+                return
+            else:
+                rest = text_after_name(text)
+                if not has_command_content(rest):
+                    self._speak("Yes?")
+                    self._name_window_until = time.time() + _NAME_WINDOW_SECONDS
+                    interaction_log.log_event("name_only_media", text=text)
+                    return
+                interaction_log.log_event("media_command", heard=text, used=rest)
+                text = rest
 
         self.messages.append({"role": "user", "content": text})
         self.brain.trace = []

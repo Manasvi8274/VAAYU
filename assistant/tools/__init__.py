@@ -20,4 +20,5 @@ from assistant.tools import (  # noqa: F401
     whatsapp,
     windows,
     youtube,
+    youtube_player,
 )

@@ -13,6 +13,8 @@ Requires the browser running with --remote-debugging-port=9222, same as
 browser.py/browser_automation.py.
 """
 
+import json
+import re
 import time
 from urllib.parse import quote_plus
 
@@ -28,6 +30,12 @@ _LOAD_WAIT_SECONDS = 1.5
 # addressing "cache data frequently, so commands can be done faster."
 _CHANNEL_CACHE_NAMESPACE = "youtube_channel"
 _CHANNEL_CACHE_MAX_AGE_SECONDS = 7 * 24 * 60 * 60
+
+
+def _remember(tab: dict) -> None:
+    # The next "pause"/"volume 40" must land in the tab this just played in.
+    from assistant.tools import youtube_player
+    youtube_player.remember(tab)
 
 
 def _resolve_target_tab(new_tab: bool) -> dict:
@@ -84,10 +92,18 @@ def _eval_js_retry_if_empty(js: str, tab: dict, retries: int = 2, retry_wait: fl
 
 def _find_channel_url(query: str, tab: dict) -> str | None:
     _navigate(f"https://www.youtube.com/results?search_query={quote_plus(query)}", tab)
+    # YouTube dropped the ytd-channel-renderer card from search results (found
+    # live: 0 on the page for "Lofi Girl") - the channel is now a plain
+    # /@handle or /channel/ link. Prefer the link whose handle/text matches
+    # the name asked for, else the first channel link in the results.
+    q = json.dumps(re.sub(r"[^a-z0-9]", "", query.lower()))
     return _eval_js_retry_if_empty(
-        "(() => { const el = document.querySelector("
-        "'ytd-channel-renderer a#main-link, ytd-channel-renderer a[href]'); "
-        "return el ? el.href : null; })()",
+        "(() => { const norm = s => (s || '').toLowerCase().replace(/[^a-z0-9]/g, ''); const q = " + q + ";"
+        " const links = Array.from(document.querySelectorAll(\"ytd-search a[href*='/@'], ytd-search a[href*='/channel/']\"))"
+        ".filter(a => a.href && !a.href.includes('music.youtube'));"
+        " const best = links.find(a => norm(a.href).includes(q) || norm(a.innerText).includes(q))"
+        " || document.querySelector('ytd-channel-renderer a#main-link') || links[0];"
+        " return best ? best.href : null; })()",
         tab,
     )
 
@@ -174,6 +190,7 @@ def play_latest_video_from_channel(channel_name: str, new_tab: bool = False) -> 
         cache.set(_CHANNEL_CACHE_NAMESPACE, channel_name, channel_url)
 
     _navigate(video_url, tab)
+    _remember(tab)
     return f"Playing the latest video from {channel_name}" + (" in a new tab." if new_tab else ".")
 
 
@@ -217,4 +234,5 @@ def play_video_on_youtube(query: str, new_tab: bool = False) -> str:
         raise ValueError(f"No video found on YouTube for '{query}'.")
 
     _navigate(video_url, tab)
+    _remember(tab)
     return f"Playing on YouTube: {query}" + (" (new tab)." if new_tab else "")

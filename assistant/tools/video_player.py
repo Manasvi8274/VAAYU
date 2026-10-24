@@ -37,6 +37,11 @@ _VIDEO_EL_JS = "document.querySelector('video')"
 _TITLE_BADGE_PREFIX_RE = re.compile(r"^\(\d+\)\s*")
 
 
+def _on_youtube(tab: dict) -> bool:
+    url = tab.get("url") or ""
+    return "youtube.com/watch" in url or "youtube.com/shorts/" in url
+
+
 def _clean_title(title: str | None) -> str:
     if not title:
         return "Untitled tab"
@@ -148,6 +153,13 @@ def set_video_volume(
     direction: str | None = None, amount: int = 20, level: int | None = None, tab_hint: str | None = None
 ) -> str:
     tab = _resolve_video_tab(tab_hint)
+    if _on_youtube(tab):  # YouTube keeps its own volume - see youtube_player.py
+        from assistant.tools import youtube_player as yp
+        if direction in ("mute", "unmute"):
+            return yp.set_muted(direction == "mute", tab=tab)
+        if level is not None:
+            return yp.set_volume(level=level, tab=tab)
+        return yp.set_volume(delta=amount if direction == "up" else -amount, tab=tab)
     current = _eval_js_on_tab(tab, f"{_VIDEO_EL_JS} ? {_VIDEO_EL_JS}.volume : null")
     if current is None:
         raise RuntimeError("No playing video found on that tab.")
@@ -285,6 +297,9 @@ def set_video_fullscreen(fullscreen: bool, tab_hint: str | None = None) -> str:
 )
 def seek_video(direction: str, seconds: int = 10, tab_hint: str | None = None) -> str:
     tab = _resolve_video_tab(tab_hint)
+    if _on_youtube(tab):
+        from assistant.tools import youtube_player as yp
+        return yp.seek(delta=seconds if direction == "forward" else -seconds, tab=tab)
     current = _eval_js_on_tab(tab, f"{_VIDEO_EL_JS} ? {_VIDEO_EL_JS}.currentTime : null")
     if current is None:
         raise RuntimeError("No playing video found on that tab.")
@@ -340,6 +355,11 @@ def seek_video(direction: str, seconds: int = 10, tab_hint: str | None = None) -
 )
 def control_video_playback(action: str, tab_hint: str | None = None) -> str:
     tab = _resolve_video_tab(tab_hint)
+    if _on_youtube(tab):
+        from assistant.tools import youtube_player as yp
+        if action == "toggle":
+            action = "pause" if yp.is_playing(tab) else "play"
+        return yp.play(tab) if action == "play" else yp.pause(tab)
     is_paused_js = f"{_VIDEO_EL_JS} ? {_VIDEO_EL_JS}.paused : null"
     currently_paused = _eval_js_on_tab(tab, is_paused_js)
     if currently_paused is None:

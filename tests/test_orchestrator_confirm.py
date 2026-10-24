@@ -168,3 +168,46 @@ def test_history_keeps_only_the_last_few_user_turns():
     trimmed = _trim_history(msgs)
     assert trimmed[0]["content"] == "sys"
     assert [m["content"] for m in trimmed if m["role"] == "user"] == [f"u{i}" for i in range(10 - _HISTORY_USER_TURNS, 10)]
+
+
+def _awake(transcript, monkeypatch, media=True):
+    from assistant import orchestrator
+    from assistant.orchestrator import State
+    monkeypatch.setattr(orchestrator, "_media_playing", lambda: media)
+    orch = _make_orchestrator(transcript=transcript)
+    orch._maybe_run_daily_checkin = MagicMock()
+    orch.state = State.AWAKE
+    orch.messages = []
+    orch._name_window_until = 0.0
+    orch.brain = MagicMock(trace=[])
+    orch.brain.respond.side_effect = lambda m, r, confirm: ("ok", m)
+    return orch
+
+
+def test_video_speech_without_the_name_is_ignored_while_media_plays(monkeypatch):
+    # Real log: "Today's episode is sponsored by the Great Courses Plus" was acted on.
+    orch = _awake("Today's episode is sponsored by the Great Courses Plus", monkeypatch)
+    orch.handle_one_turn()
+    orch.brain.respond.assert_not_called()
+
+
+def test_while_media_plays_only_the_words_after_the_name_are_used(monkeypatch):
+    orch = _awake("sitting in the shower in the dark. Vaayu, pause the video", monkeypatch)
+    orch.handle_one_turn()
+    sent = orch.brain.respond.call_args.args[0]
+    assert sent[-1]["content"] == "pause the video"
+
+
+def test_bare_name_during_media_opens_a_window_for_the_next_sentence(monkeypatch):
+    orch = _awake("Vaayu", monkeypatch)
+    orch.handle_one_turn()
+    orch._speak.assert_called_once_with("Yes?")
+    orch.stt.transcribe.return_value = "volume 40"
+    orch.handle_one_turn()
+    assert orch.brain.respond.call_args.args[0][-1]["content"] == "volume 40"
+
+
+def test_no_name_needed_when_nothing_is_playing(monkeypatch):
+    orch = _awake("pause", monkeypatch, media=False)
+    orch.handle_one_turn()
+    orch.brain.respond.assert_called_once()

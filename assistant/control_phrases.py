@@ -24,6 +24,19 @@ def _name_present(normalized: str) -> bool:
     return "vaayu" in normalized or "vayu" in normalized
 
 
+_NAME_WORD_RE = re.compile(r"\b(?:vaa?yu)\b[\s,.!?:;-]*", re.IGNORECASE)
+
+
+def text_after_name(text: str) -> str:
+    """What was said after the LAST mention of Vaayu's name - "...sponsored
+    by X. Vaayu, pause the video" -> "pause the video". Used while media is
+    playing, when everything before the name is likely the video's audio."""
+    last = None
+    for last in _NAME_WORD_RE.finditer(text):
+        pass
+    return text[last.end():].strip() if last else text.strip()
+
+
 def is_wake_command(text: str) -> bool:
     normalized = _normalize(text)
     return _name_present(normalized) and "wake" in normalized

@@ -25,18 +25,20 @@ _MIN_WORDS = 2
 # this was tested on, so realistic Hindi/Hinglish pronunciation could not be
 # tested end-to-end. If specific Hindi words keep getting misheard in real
 # use, add them here the same way app names were added.
+# Whisper keeps only the LAST ~223 tokens of initial_prompt. Found by
+# measuring: the old prompt was 258 tokens, so its opening - the line that
+# teaches the name "Vaayu" - was silently cut off every time. Keep this under
+# ~200 tokens (tests/test_whisper_prompt.py checks it) and the name LAST.
+# Payment apps were removed: Vaayu refuses them anyway.
 _VOCAB_PROMPT = (
-    "The assistant is named Vaayu, also spelled Vayu. Commands may start with 'wake up Vaayu', "
-    "'sleep Vaayu', or 'shutdown Vaayu'. Vaayu. Vaayu. "
-    "Commands may mention apps: WhatsApp, Instagram, Telegram, Discord, Zoom, Gmail, Outlook, "
-    "Chrome, Brave, Edge, Firefox, YouTube, Spotify, Netflix, Notepad, Calculator, VS Code, "
-    "Steam, PhonePe, Paytm, Google Pay, Zomato, Swiggy, Amazon, Flipkart, Hotstar, Jio. "
-    "Commands may mention: Bluetooth, Wi-Fi, battery, volume, microphone, speaker, notes, "
-    "tab, window, USB, printer, display, notification, screenshot, folder, file, password, "
-    "settings, brightness, reminder, calendar, email, message, search, download, upload. "
-    "Commands are sometimes in Hinglish (Hindi and English mixed in Roman script), for example: "
-    "whatsapp open kro, chrome band karo, battery kitni hai, volume kam karo, ye kholo, "
-    "youtube pe search karo, notepad mein likho, kya haal hai."
+    "Apps: WhatsApp, Telegram, Discord, Zoom, Gmail, Outlook, Chrome, Brave, Edge, YouTube, Spotify, "
+    "Netflix, Hotstar, Notepad, Calculator, VS Code, Steam, Tekken. "
+    "Commands: pause the video, resume the video, play, volume 50 percent, mute, next video, skip ad, "
+    "captions, subtitles, full screen, theater mode, speed, like, subscribe, Bluetooth, Wi-Fi, battery, "
+    "screenshot, tab, window. "
+    "Hinglish: whatsapp open kro, chrome band karo, battery kitni hai, volume kam karo, gaana chalao, "
+    "video roko, kya haal hai. "
+    "The assistant is named Vaayu: wake up Vaayu, sleep Vaayu, shutdown Vaayu, Vaayu die. Vaayu."
 )
 
 

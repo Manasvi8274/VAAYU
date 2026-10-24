@@ -102,3 +102,27 @@ def _isolated_interaction_log(tmp_path_factory):
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(interaction_log, "LOG_PATH", tmp_path_factory.mktemp("interactions") / "interactions.jsonl")
         yield
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _no_real_volume_or_youtube_changes():
+    # control_media now sets the REAL Windows volume (read back via the audio
+    # endpoint) and acts on a real YouTube tab if one is open - no test may do
+    # either. Media tests patch these per test with fakes.
+    from unittest.mock import MagicMock
+    from assistant.tools import media
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(media, "_youtube_video", lambda: None)
+        mp.setattr(media, "_endpoint", lambda: MagicMock(GetMasterVolumeLevelScalar=lambda: 0.5, GetMute=lambda: 0))
+        yield
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _no_real_audio_meter():
+    # The orchestrator reads the real Windows output meter to tell whether
+    # media is playing - a test's outcome must not depend on whether the
+    # laptop happens to be playing sound. Media-gate tests patch it per test.
+    from assistant import orchestrator
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(orchestrator, "_media_playing", lambda: False)
+        yield

@@ -50,6 +50,9 @@ _EMPTY_REPLY_FALLBACK = (
     "Sorry, something went wrong there and I don't have a real answer - please try that again."
 )
 _MAX_TOOL_STEPS = 5
+_TOOL_NAME_RE = re.compile(r"\b[a-z]+_[a-z_]+\b")
+_DIDNT_GET_IT = "Sorry, I didn't get that - could you say it again?"
+_MAX_SPOKEN_CHARS = 220
 
 # Ollama unloads a model from memory after 5 minutes idle by default, and
 # reloading it is slow - measured ~20s wall time on this machine for a 3B
@@ -137,6 +140,14 @@ def _sanitize_reply(text: str) -> str:
     cleaned = _MARKDOWN_LINK_RE.sub(r"\1", cleaned).strip()
     if not cleaned:
         return _EMPTY_REPLY_FALLBACK
+    # Real log: replies read the system prompt back ("use either close_app or
+    # open_app - neither is about closing the browser itself") and ran 15-20 s
+    # of speech. A snake_case tool name is never meant for the user's ears.
+    if _TOOL_NAME_RE.search(cleaned):
+        return _DIDNT_GET_IT
+    sentences = re.split(r"(?<=[.!?])\s+", cleaned)
+    if len(cleaned) > _MAX_SPOKEN_CHARS and len(sentences) > 2:
+        cleaned = " ".join(sentences[:2])
     return cleaned
 
 
@@ -306,6 +317,10 @@ class OllamaBrain:
                 # e.g. WhatsApp: the model swapped "SAVED MESSAGES" for "mom"
                 # in the benchmark - recipients only ever come from fast_route.
                 return blocked, messages + [{"role": "assistant", "content": blocked}]
+
+            if self.fast_paths and (unsure := router.ungrounded(name, arguments, last_user_text)):
+                self.trace.append({"path": "llm", "tool": name, "args": arguments, "ungrounded": True})
+                return unsure, messages + [{"role": "assistant", "content": unsure}]
 
             if last_action_failed and (name, arguments) == last_failed_call:
                 identical_retries += 1

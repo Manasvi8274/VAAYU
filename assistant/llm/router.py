@@ -25,11 +25,13 @@ import re
 
 from assistant.tools.registry import ToolRegistry
 
+# Fillers and the name in any order: "okay Vaayu, hold on, pause" (suite found
+# "hold on" was only stripped when it came before the name).
 _LEAD = re.compile(
-    r"^(?:(?:hey|ok|okay|so|okay so|ok so|and|um+|uh+|hmm+|hold on|let's|lets)\s+)*(?:vaa?yu\s+)?"
-    r"(?:(?:please|pls|can you|could you|would you|will you|zara|just)\s+)*", re.I)
+    r"^(?:(?:hey|ok|okay|so|and|um+|uh+|hmm+|hold on|let's|lets|vaa?yu|please|pls|can you|could you|would you|"
+    r"will you|zara|just)\s+)*", re.I)
 _TAIL = re.compile(r"(?:\s+(?:please|pls|for me|na|yaar|now|right now|bhai|jaldi|quickly|a bit|a little|"
-                   r"jaldi se|vaa?yu))+$", re.I)
+                   r"jaldi se|vaa?yu|for a (?:second|sec|moment|minute|bit)|for now|real quick))+$", re.I)
 _FILLER_WORDS = re.compile(r"\b(?:um+|uh+|hmm+|erm|thoda|zara)\b", re.I)
 # Speech-to-text punctuation: drop it, except inside "google.com"/"10:30" and
 # a ": " separator, which the WhatsApp "to X: message" shape needs.
@@ -48,9 +50,13 @@ _SITE = r"(?:youtube|hotstar|netflix|prime video|spotify|jiocinema|zee5|sonyliv)
 _SONG = r"(?:song|track|music|gaana|gana)"
 _KARO = r"(?:karo|kar do|kardo|kar de|karde|kro)"
 _MEDIA = [
-    (rf"(?:pause|play|resume|stop|continue|keep playing|continue playing)(?: (?:it|the music|music|the song|song|media|playback|playing))?|"
-     rf"(?:{_SONG} )?(?:ruko|rok do|roko|chalao|chala do)|{_SONG} (?:band {_KARO}|pause {_KARO}|rok do|roko|stop {_KARO})|"
-     rf"(?:{_SONG}) (?:wapas|phir se|fir se) (?:chalao|chala do|play {_KARO})", "play_pause"),
+    # Pause and play are separate on purpose: "pause" must never START something
+    # (control_media aims them at a playing YouTube video, see media.py).
+    (rf"(?:pause|stop|hold)(?: (?:it|the music|music|the song|song|media|playback|the playback|playing|everything))?(?: {_KARO})?|"
+     rf"(?:{_SONG} )?(?:ruko|rok do|roko)|{_SONG} (?:band {_KARO}|pause {_KARO}|rok do|roko|stop {_KARO})", "pause"),
+    (rf"(?:play|resume|continue|unpause|keep playing|continue playing|start playing|carry on|keep going|go on)"
+     rf"(?: (?:it|the music|music|the song|song|media|playback|playing|with it|with the video|with the music))?|"
+     rf"(?:{_SONG} )?(?:chalao|chala do)|(?:{_SONG}) (?:wapas|phir se|fir se) (?:chalao|chala do|play {_KARO})", "play"),
     (rf"(?:play )?(?:the )?next(?: {_SONG})?|skip(?: this| the| it)?(?: {_SONG})?|agla {_SONG}(?: chalao| lagao| bajao)?|"
      rf"change(?: this| the)? {_SONG}|{_SONG} (?:badlo|change {_KARO}|badal do)|(?:koi )?(?:aur|dusra|doosra) {_SONG}(?: chalao| lagao| bajao)?",
      "next"),
@@ -62,8 +68,11 @@ _MEDIA = [
     (rf"(?:decrease|lower|reduce|turn down)(?: the)?(?: system)? (?:volume|sound)|turn the (?:volume|sound) down|"
      rf"(?:system )?volume (?:down|kam {_KARO}|ghatao)|awaa?z (?:kam {_KARO}|dheere {_KARO}|dheemi {_KARO})|"
      rf"(?:make it )?(?:quieter|softer)|(?:it's |its |it is )?too loud", "volume_down"),
-    (rf"(?:un)?mute(?: the| it| everything)?(?: (?:system|volume|sound|audio|laptop|computer|speakers?))?|"
+    (rf"mute(?: the| it| everything)?(?: (?:system|volume|sound|audio|laptop|computer|speakers?))?|"
      rf"silence(?: the| it| everything)?(?: (?:laptop|computer|sound|audio))?|(?:awaa?z|sound|volume) band {_KARO}", "mute"),
+    # Found live: "unmute" used to match the mute pattern above and muted again.
+    (rf"unmute(?: the| it| everything)?(?: (?:system|volume|sound|audio|laptop|computer|speakers?))?|"
+     rf"(?:awaa?z|sound|volume) (?:wapas )?(?:chalu|on) {_KARO}", "unmute"),
 ]
 _MEDIA = [(re.compile(rf"^(?:{p})$", re.I), a) for p, a in _MEDIA]
 
@@ -85,8 +94,73 @@ _SITE_OPEN = re.compile(
     rf"^(?:open|launch|start|go to|visit)(?: up)? (?:the )?(?P<site>{'|'.join(sorted(map(re.escape, _SITES), key=len, reverse=True))})"
     rf"(?: website| site| page)?(?: (?:in|on) (?:a )?new tab)?(?: (?:in|on|using) (?:the )?(?P<browser>{_BROWSERS})(?: browser)?)?"
     rf"(?: (?:in|on) (?:a )?new tab)?$|"
+    rf"^play (?P<site3>youtube)$|"
     rf"^(?P<site2>{'|'.join(sorted(map(re.escape, _SITES), key=len, reverse=True))})(?: website| site)? "
     rf"(?:kholo|khol do|open karo|open kro|chalao)$", re.I)
+
+# --- YouTube (youtube_control, verified against YouTube's own player) ---------
+_NTH = {"first": 1, "1st": 1, "pehla": 1, "pehli": 1, "second": 2, "2nd": 2, "doosra": 2, "dusra": 2, "doosri": 2,
+        "third": 3, "3rd": 3, "teesra": 3, "teesri": 3, "fourth": 4, "4th": 4, "chautha": 4, "fifth": 5, "5th": 5,
+        "one": 1, "two": 2, "three": 3, "four": 4, "five": 5}
+_SPEED_WORDS = {"double": 2, "twice": 2, "half": 0.5, "normal": 1, "regular": 1}
+_THE_VIDEO = r"(?: the| this| that| it)?(?: youtube)?(?: video| one)?"
+_ON = r"(?:turn on|switch on|enable|show|start|put on)"
+_OFF = r"(?:turn off|switch off|disable|hide|stop|remove)"
+
+
+def _yt(action, value=None):
+    return ("tool", "youtube_control", {"action": action, **({"value": str(value)} if value is not None else {})})
+
+
+_YT_RULES = [
+    (rf"^{_ON}(?: the)? (?:captions|subtitles|subtitle|cc)$|^(?:captions|subtitles|subtitle|cc) (?:on|chalu)(?: karo| kar do)?$",
+     lambda m: _yt("captions_on")),
+    (rf"^{_OFF}(?: the)? (?:captions|subtitles|subtitle|cc)$|^(?:captions|subtitles|subtitle|cc) (?:off|band|hatao)(?: karo| kar do)?$",
+     lambda m: _yt("captions_off")),
+    (rf"^(?:{_ON}|go to|switch to)(?: the)? theat(?:er|re)(?: mode)?$|^theat(?:er|re) mode(?: on)?$", lambda m: _yt("theater_on")),
+    (rf"^(?:{_OFF}|exit|leave)(?: the)? theat(?:er|re)(?: mode)?$|^theat(?:er|re) mode off$|^default view$", lambda m: _yt("theater_off")),
+    (rf"^(?:loop|repeat){_THE_VIDEO}$|^put it on (?:loop|repeat)$|^(?:loop|repeat) (?:on|karo)$", lambda m: _yt("loop_on")),
+    (r"^(?:stop|turn off) (?:looping|repeating|the loop|repeat)$|^(?:loop|repeat) off$", lambda m: _yt("loop_off")),
+    (rf"^like{_THE_VIDEO}$|^video (?:ko )?like (?:karo|kar do)$|^hit (?:the )?like(?: button)?$", lambda m: _yt("like")),
+    (rf"^(?:unlike|remove (?:the|my) like){_THE_VIDEO}$", lambda m: _yt("unlike")),
+    (rf"^dislike{_THE_VIDEO}$", lambda m: _yt("dislike")),
+    (r"^subscribe(?: to)?(?: (?:this|the|their))?(?: channel)?$|^channel (?:ko )?subscribe (?:karo|kar do)$", lambda m: _yt("subscribe")),
+    (r"^skip(?: the| this)? ads?$|^ads? skip (?:karo|kar do)$|^skip the advertisement$", lambda m: _yt("skip_ad")),
+    (rf"^{_ON}(?: the)? autoplay$|^autoplay on$", lambda m: _yt("autoplay_on")),
+    (rf"^{_OFF}(?: the)? autoplay$|^autoplay off$|^don't autoplay$", lambda m: _yt("autoplay_off")),
+    (r"^(?:set |change |put )?(?:the )?(?:video )?quality(?: to| at)? (?P<q>\d{3,4}p|4k|auto)$|^(?:play|watch|switch to)(?: it)?(?: in)? (?P<q2>\d{3,4}p|4k|auto)$|"
+     r"^(?P<q3>\d{3,4}p|4k)(?: quality)?(?: karo)?$", lambda m: _yt("quality", m.group("q") or m.group("q2") or m.group("q3"))),
+    (r"^(?:play(?: it)?|set(?: the)? speed|speed)(?: at| to)? (?P<r>\d(?:\.\d+)?|0?\.\d+) ?(?:x|times)?(?: speed)?$|^(?P<r2>\d(?:\.\d+)?) ?x(?: speed)?$",
+     lambda m: _yt("speed", m.group("r") or m.group("r2"))),
+    (r"^(?:play(?: it)?(?: at)? )?(?P<w>double|twice|half|normal|regular)(?: the)? speed$|^back to normal speed$",
+     lambda m: _yt("speed", _SPEED_WORDS.get((m.group("w") or "normal").lower(), 1))),
+    (r"^(?:speed (?:it |the video )?up|speed badhao|faster)$", lambda m: _yt("speed", 1.5)),
+    (r"^(?:slow (?:it |the video )?down|slower|speed kam karo)$", lambda m: _yt("speed", 0.75)),
+    (r"^(?:what(?:'s| is)(?: this)? (?:playing|video|song)|what(?:'s| is) this|what (?:video|song) is (?:this|playing)|which (?:video|song) is (?:this|playing)|"
+     r"what am i (?:watching|listening to)|ye kaunsa (?:gaana|video) hai|kya chal raha hai)$", lambda m: _yt("now_playing")),
+    (r"^(?:play )?(?:the )?next video$|^agla video(?: chalao| lagao)?$|^skip(?: this)? video$", lambda m: _yt("next")),
+    (r"^(?:play |go back to )?(?:the )?previous video$|^pichla video(?: chalao| lagao)?$", lambda m: _yt("previous")),
+    (rf"^(?:restart|replay|start over){_THE_VIDEO}$|^(?:play|start)(?: it| the video)? from the (?:start|beginning)$|"
+     r"^shuru se (?:chalao|lagao)$|^start (?:it |the video )?(?:again|over)$", lambda m: _yt("restart")),
+    (r"^(?:go|jump|skip|seek)(?: to)? (?P<mm>\d{1,2}):(?P<ss>\d{2})$", lambda m: _yt("seek_to", int(m.group("mm")) * 60 + int(m.group("ss")))),
+    (r"^(?:go|jump|skip|seek) to (?P<n>\d+) (?P<u>minutes?|mins?|seconds?|secs?)(?: mark)?$",
+     lambda m: _yt("seek_to", int(m.group("n")) * (60 if m.group("u").lower().startswith("m") else 1))),
+    (r"^(?:search|find|look up|look for)(?: on)? youtube(?: for)? (?P<q>.+)$|^(?:search|find|look up|look for) (?P<q2>.+?) on youtube$|"
+     r"^youtube (?:pe|par|pr) (?P<q3>.+?) (?:search|dhundo|search karo)$", lambda m: _yt("search", m.group("q") or m.group("q2") or m.group("q3"))),
+    (r"^(?:play|open|click)(?: the)? (?P<n>first|second|third|fourth|fifth|1st|2nd|3rd|4th|5th|one|two|three|four|five)(?: one| video| result| link)?$|"
+     r"^(?:play|open)(?: result| video)(?: number)? (?P<d>\d)$|^(?P<h>pehla|pehli|doosra|dusra|doosri|teesra|teesri|chautha) (?:video|wala) (?:chalao|lagao|kholo)$",
+     lambda m: _yt("play_result", _NTH.get((m.group("n") or m.group("h") or "").lower()) or m.group("d"))),
+    (r"^(?:open|go to|show me)(?: the| this| their)?(?: video's)? channel$|^channel (?:kholo|dikhao)$", lambda m: _yt("open_channel")),
+    (r"^(?:go to |open )?(?:the )?youtube home(?: ?page)?$|^go home on youtube$", lambda m: _yt("home")),
+    (r"^(?:next|agla|skip(?: this)?) short$", lambda m: _yt("next_short")),
+    (r"^copy(?: the| this)?(?: video| youtube)? (?:link|url)$|^link copy (?:karo|kar do)$", lambda m: _yt("copy_link")),
+]
+_YT_RULES = [(re.compile(p, re.I), build) for p, build in _YT_RULES]
+
+# "volume to 75", "volume down to 75%", "awaz 40 par karo", "Picture volume level, 75%" (a real
+# mis-transcription of "set volume level 75%"): a volume word plus exactly one number means set it.
+_VOLUME_WORD = re.compile(r"\b(?:volume|sound|awaa?z)\b", re.I)
+_VOLUME_NUMBER = re.compile(r"\b(\d{1,3})(?:\.\d+)?\s?(?:%|percent)?(?!\s*(?:seconds?|secs?|minutes?|mins?|x\b))", re.I)
 
 _OPEN_VERB = r"(?:open|launch|start|fire up|bring up|run)"
 _OPEN = [
@@ -166,7 +240,11 @@ _DATE = re.compile(r"^(?:what(?:'s| is) (?:the )?(?:date|day)(?: today)?|aaj (?:
                    r"what day is it(?: today)?|today's date)$", re.I)
 
 # In-page video control (any site). Only wording that clearly says video/site.
-_VIDEO_PLAY = re.compile(rf"^(?P<act>pause|play|resume)(?: the)?(?: (?P<site>{_SITE}))? video$|^video (?P<hi>roko|rok do|chalao|chala do)$", re.I)
+# Includes Whisper mishearings seen in data/interactions.jsonl: "pause the
+# video" -> "post the video", "resume that video" -> "assume that video".
+_VIDEO_PLAY = re.compile(rf"^(?:i said )?(?P<act>pause|post|pose|paws|pauze|stop|play|resume|assume|presume|unpause|continue)"
+                         rf"(?: the| that| this)?(?: (?P<site>{_SITE}))? video$|^video (?P<hi>roko|rok do|chalao|chala do|pause karo|play karo)$",
+                         re.I)
 _FULL_ON = re.compile(r"^(?:make (?:it|this|the video) |go |put it (?:in )?)?full ?screen(?: (?:this|this video|the video|mode))?$|"
                       r"^full ?screen (?:karo|kar do)$", re.I)
 _FULL_OFF = re.compile(r"^(?:exit|leave|close|get out of) full ?screen(?: mode)?$|^shrink (?:the |this )?video$|"
@@ -243,8 +321,41 @@ _SMALL_TALK = [
 ]
 
 
+_SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
+
+
+def _collapse_repeats(text: str) -> str:
+    """Whisper sometimes repeats a sentence ("kya haal hai. kya haal hai.
+    kya haal hai." - real log); identical consecutive sentences count once."""
+    out = []
+    for sentence in _SENTENCE_SPLIT.split(text.strip()):
+        key = re.sub(r"[^\w]+", " ", sentence.lower()).strip()
+        if not out or key != out[-1][0]:
+            out.append((key, sentence))
+    return " ".join(s for _k, s in out)
+
+
+_TENS = {"twenty": 20, "thirty": 30, "forty": 40, "fourty": 40, "fifty": 50, "sixty": 60, "seventy": 70,
+         "eighty": 80, "ninety": 90}
+_TEENS = {"ten": 10, "eleven": 11, "twelve": 12, "thirteen": 13, "fourteen": 14, "fifteen": 15, "sixteen": 16,
+          "seventeen": 17, "eighteen": 18, "nineteen": 19, "hundred": 100, "a hundred": 100, "one hundred": 100}
+_UNITS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9}
+_NUMBER_WORDS_RE = re.compile(
+    r"\b(?:(?P<tens>" + "|".join(_TENS) + r")(?:[ -](?P<unit>" + "|".join(_UNITS) + r"))?|(?P<teen>"
+    + "|".join(sorted(_TEENS, key=len, reverse=True)) + r"))\b", re.I)
+
+
+def _number_words_to_digits(text: str) -> str:
+    """"down to thirty" -> "down to 30" (found live: the LLM turned it into 25)."""
+    def to_digits(m):
+        if m.group("teen"):
+            return str(_TEENS[m.group("teen").lower()])
+        return str(_TENS[m.group("tens").lower()] + (_UNITS[m.group("unit").lower()] if m.group("unit") else 0))
+    return _NUMBER_WORDS_RE.sub(to_digits, text)
+
+
 def normalize(text: str, keep_commas: bool = False) -> str:
-    raw = text.strip()
+    raw = _number_words_to_digits(_collapse_repeats(text))
     if keep_commas:  # for splitting steps: "open brave, play X" is two commands
         raw = raw.replace(",", " , ")
         t = re.sub(r"\.\.\.|(?<![a-z0-9])\.|\.(?![a-z0-9])|[!?;\"]", " ", raw, flags=re.I)
@@ -294,13 +405,24 @@ def _route_one(t: str):
         raw = (m.group("st") or m.group("st2") or m.group("v") or m.group("st4")).lower()
         state = "on" if raw in ("on", "enable", "chalu", "start") else "off"
         return ("tool", "set_radio", {"kind": kind, "state": state})
+    for pattern, build in _YT_RULES:
+        if m := pattern.match(t):
+            return build(m)
+    if (_VOLUME_WORD.search(t) and len(t.split()) <= 8 and len(nums := _VOLUME_NUMBER.findall(t)) == 1
+            and not re.search(r"\b(?:seconds?|minutes?)\b", t, re.I)):
+        level = min(int(nums[0]), 100)
+        if re.search(r"\byoutube\b", t, re.I):  # named YouTube: YouTube, even while it's paused (found live)
+            return _yt("volume_set", level)
+        if re.search(r"\bvideo\b", t, re.I):  # the player's own volume on any site (YouTube handled inside)
+            return ("tool", "set_video_volume", {"level": level})
+        return ("tool", "control_media", {"action": "volume_set", "level": level})
     for pattern, action in _MEDIA:
         if pattern.match(t):
             return ("tool", "control_media", {"action": action})
     if m := _VIDEO_PLAY.match(t):
         act = (m.group("act") or "").lower()
         hi = (m.group("hi") or "").lower()
-        args = {"action": "pause" if act == "pause" or hi.startswith("rok") else "play"}
+        args = {"action": "pause" if act in ("pause", "post", "pose", "paws", "pauze", "stop") or hi.startswith(("rok", "pause")) else "play"}
         if m.group("site"):
             args["tab_hint"] = m.group("site")
         return ("tool", "control_video_playback", args)
@@ -353,7 +475,7 @@ def _route_one(t: str):
     if (m := _YOUTUBE.match(t)) and not _CHANNEL_HINT.search(t):
         return ("tool", "play_video_on_youtube", {"query": m.group("q") or m.group("q2") or m.group("q3")})
     if m := _SITE_OPEN.match(t):
-        url = _SITES[(m.group("site") or m.group("site2")).lower()]
+        url = _SITES[(m.group("site") or m.group("site2") or m.group("site3")).lower()]
         if m.group("browser"):  # "open youtube in brave": that browser first, then the site in it
             return ("multi", [("open_app", {"app_name": m.group("browser")}), ("open_website", {"url_or_query": url})])
         return ("tool", "open_website", {"url_or_query": url})
@@ -456,6 +578,40 @@ def split_steps(text: str) -> list[str] | None:
     return parts
 
 
+# Free-text arguments the model fills in must come from the user's own words.
+# Real log: "Open Brave and Play YouTube" -> play_video_on_youtube(query=
+# "latest bollywood songs 2026"), which the user never said.
+GROUNDED_ARGS = {
+    "play_video_on_youtube": ("query", "play"), "play_latest_video_from_channel": ("channel_name", "play"),
+    "open_app": ("app_name", "open"), "close_app": ("app_name", "close"), "add_note": ("text", "note down"),
+    "type_text": ("text", "type"), "open_website": ("url_or_query", "open"), "search_files": ("query", "find"),
+}
+_GROUND_STOP = {"the", "a", "an", "of", "and", "to", "in", "on", "for", "my", "me", "app", "com", "www", "http",
+                "https", "please", "video", "videos", "song", "songs", "latest", "new"}
+
+
+def _stem(w: str) -> str:
+    return w[:5]
+
+
+def ungrounded(tool_name: str, arguments: dict, user_text: str) -> str | None:
+    """A reply asking the user to repeat, if the model invented this tool
+    call's free-text argument instead of taking it from what was said."""
+    spec = GROUNDED_ARGS.get(tool_name)
+    if not spec:
+        return None
+    arg, verb = spec
+    value = str(arguments.get(arg) or "")
+    words = [w for w in re.findall(r"[a-z0-9]+", value.lower()) if w not in _GROUND_STOP and len(w) > 1]
+    if not words:
+        return None
+    said = {_stem(w) for w in re.findall(r"[a-z0-9]+", user_text.lower())}
+    found = sum(_stem(w) in said for w in words)
+    if found / len(words) >= 0.6:
+        return None
+    return f"I'm not sure what you want me to {verb} - could you say it again?"
+
+
 def blocked_reply(tool_name: str) -> str | None:
     """Reply to give instead of letting the model call this tool itself."""
     return _LLM_BLOCKED_TOOLS.get(tool_name)
@@ -536,6 +692,4 @@ def format_result(name: str, result) -> str | None:
         parts.append(f"CPU {round(result.get('cpu_percent', 0))}%")
         parts.append(f"RAM {round(result.get('ram_percent', 0))}%")
         return ". ".join(parts) + "."
-    if name == "control_media" and isinstance(result, str):
-        return "Done."
     return result if isinstance(result, str) and result.strip() else None
