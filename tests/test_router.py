@@ -98,9 +98,9 @@ def test_model_is_never_allowed_to_pick_a_whatsapp_recipient():
         brain = OllamaBrain(host="http://fake", model="m")
     brain.client = MagicMock()
     brain.client.chat.return_value = {"message": {"role": "assistant", "content": "", "tool_calls": [
-        {"function": {"name": "send_whatsapp_message", "arguments": {"contact_name": "mom", "message": "buy milk"}}}]}}
+        {"function": {"name": "send_whatsapp_message", "arguments": {"contact_name": "SAVED MESSAGES", "message": "buy milk"}}}]}}
     with patch.object(type(registry), "dispatch") as dispatch:
-        reply, _ = brain.respond([{"role": "user", "content": "message SAVED MESSAGES buy milk on whatsapp"}],
+        reply, _ = brain.respond([{"role": "user", "content": "message mom buy milk on whatsapp"}],
                                  registry, confirm=lambda n, a: True)
     dispatch.assert_not_called()
     assert reply == router.WHATSAPP_HOWTO
@@ -227,3 +227,31 @@ def test_model_cannot_toggle_radios_on_its_own():
                                          ("turn it up to 80 percent", 80), ("set it to 50%", 50)])
 def test_volume_change_without_the_word_volume(text, level):
     assert router.fast_route(text) == ("tools", [("control_media", {"action": "volume_set", "level": level})])
+
+
+@pytest.mark.parametrize("text, want", [
+    ("message SAVED MESSAGES buy milk on whatsapp", ("SAVED MESSAGES", "buy milk")),
+    ("message Raman Garg send the report on whatsapp", ("Raman Garg", "send the report")),
+    ("message mom I will be late on whatsapp", None),  # unknown chat: where the name ends is a guess - not routed
+])
+def test_bare_whatsapp_message_splits_only_on_a_known_chat(text, want):
+    routed = router.fast_route(text)
+    if want is None:
+        assert routed is None
+    else:
+        assert routed == ("tools", [("send_whatsapp_message", {"contact_name": want[0], "message": want[1]})])
+
+
+@pytest.mark.parametrize("text, want", [
+    ("summarize this page", ("read_page", {})),
+    ("put the ball in the bottom left corner", ("move_status_orb", {"position": "bottom left"})),
+    ("change check-in time to 10:30", ("set_daily_update_time", {"time": "10:30"})),
+    ("open youtube and play kesariya", None),
+])
+def test_overnight_benchmark_misses(text, want):
+    routed = router.fast_route(text)
+    if want is None:
+        assert routed == ("tools", [("open_website", {"url_or_query": "youtube.com"}),
+                                    ("play_video_on_youtube", {"query": "kesariya"})])
+    else:
+        assert routed == ("tools", [want])

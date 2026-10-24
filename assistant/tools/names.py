@@ -24,8 +24,13 @@ DEFAULTS = {
     "channel": ["OG Crew", "Carryminati", "Dhruv Rathee", "Technical Guruji", "Samay Raina", "MrBeast", "Lofi Girl",
                 "T-Series", "BB Ki Vines", "Total Gaming", "Mortal", "Linus Tech Tips", "Ranveer Allahbadia"],
     "contact": ["SAVED MESSAGES", "Raman Garg"],
+    # Every common app is listed, not just the hard-to-hear ones: an unlisted real app gets
+    # "corrected" to a listed sound-alike (holdout: "teams ko band kar do" closed Steam).
     "app": ["Tekken 7", "Armoury Crate", "WhatsApp", "Brave", "VS Code", "Spotify", "Discord", "Telegram",
-            "Notepad", "Calculator", "File Explorer", "Task Manager", "Steam", "Zoom", "Outlook"],
+            "Notepad", "Calculator", "File Explorer", "Task Manager", "Steam", "Zoom", "Outlook", "Teams",
+            "Microsoft Teams", "Chrome", "Edge", "Firefox", "Word", "Excel", "PowerPoint", "Paint", "Photos",
+            "Settings", "Camera", "Snipping Tool", "Slack", "OBS", "VLC", "Terminal", "Command Prompt", "Clock",
+            "Mail", "Calendar", "Maps", "Store", "Xbox", "Epic Games", "Notion", "Obsidian"],
 }
 # Which tool argument holds which kind of name.
 ARG_KINDS = {

@@ -322,6 +322,27 @@ _WA = [
     re.compile(r"^whatsapp (?P<w>.+?) (?:saying|that) (?P<m>.+)$", re.I),
     re.compile(r"^(?:tell|message|text) (?P<w>.+?) on whatsapp (?:that|saying) (?P<m>.+)$", re.I),
 ]
+_WA_BARE = re.compile(r"^(?:message|text|whatsapp) (?P<rest>.+?) (?:on|in|via|par|pe) whatsapp$", re.I)
+
+
+def _split_known_contact(rest: str):
+    """(chat, message) when `rest` starts with a chat the user has named before
+    (tools/names.py), longest name first - otherwise None, and the request goes
+    to the usual "say it clearly" reply. Never guesses where an unknown name ends."""
+    from assistant.tools import names
+    for name in sorted(names.load()["contact"], key=len, reverse=True):
+        if rest.lower().startswith(name.lower() + " ") and rest[len(name):].strip():
+            return name, rest[len(name):].strip()
+    return None
+
+
+_READ_PAGE = re.compile(r"^(?:summari[sz]e|read(?: out)?|explain) (?:this|the|current) (?:page|article|website|site|tab)$|"
+                        r"^what(?:'s| is| does) (?:this|the) (?:page|article)(?: say| about)?$|^(?:ye|is) page (?:me|mein) kya hai$",
+                        re.I)
+_ORB = re.compile(r"^(?:move|put|place|shift|send)(?: the)? (?:status )?(?:orb|ball|circle|bubble)(?: to| in| at| into)?(?: the)? "
+                  r"(?P<pos>.+?)(?: corner| of the screen| side)?$", re.I)
+_UPDATE_TIME = re.compile(r"^(?:set|change|move|make)(?: my| the)?(?: daily)? (?:update|check-in|check in|checkin) time"
+                          r"(?: to| at)? (?P<t>\d{1,2}(?::\d{2})?(?: ?[ap]\.?m\.?)?)$", re.I)
 _MULTI_RECIPIENT = re.compile(r"\s(?:and|aur|&)\s|,", re.I)
 WHATSAPP_HOWTO = ("I only send WhatsApp messages when you say the chat and the message clearly, like: "
                   "send hello to SAVED MESSAGES on WhatsApp.")
@@ -479,6 +500,15 @@ def _route_one(t: str):
         if site:
             args["tab_hint"] = site
         return ("tool", "set_video_volume", args)
+    if _READ_PAGE.match(t):
+        return ("tool", "read_page", {})
+    if m := _ORB.match(t):
+        return ("tool", "move_status_orb", {"position": m.group("pos").strip()})
+    if m := _UPDATE_TIME.match(t):
+        return ("tool", "set_daily_update_time", {"time": m.group("t").strip()})
+    if m := _WA_BARE.match(t):  # "message SAVED MESSAGES buy milk on whatsapp" - no word between chat and message
+        if split := _split_known_contact(m.group("rest")):
+            return ("tool", "send_whatsapp_message", {"contact_name": split[0], "message": split[1]})
     if _SCREENSHOT.match(t):
         return ("tool", "take_screenshot", {})
     if _LOCK.match(t):
@@ -586,7 +616,7 @@ _ACTION_START = re.compile(
 
 
 def _route_parts(parts: list[str]) -> list:
-    routed, whatsapp_open = [], False
+    routed, whatsapp_open, youtube_open = [], False, False
     for p in parts:
         r = _route_one(p)
         if r is None and whatsapp_open:
@@ -594,8 +624,13 @@ def _route_parts(parts: list[str]) -> list:
                 if (m := pattern.match(p)) and not _MULTI_RECIPIENT.search(f" {m.group('w')} "):
                     r = ("tool", "send_whatsapp_message", {"contact_name": m.group("w").strip(), "message": m.group("m").strip()})
                     break
+        # "open youtube and play kesariya": after YouTube, a bare "play X" means play it there.
+        if r is None and youtube_open and (m := re.match(r"^(?:play|search|put on|chalao|lagao) (?P<q>.+)$", p, re.I)):
+            r = ("tool", "play_video_on_youtube", {"query": m.group("q").strip()})
         if r and r[0] == "tool" and r[1] == "open_app" and r[2]["app_name"].lower() == "whatsapp":
             whatsapp_open = True
+        if r and r[0] == "tool" and "youtube" in str(r[2].get("url_or_query") or r[2].get("app_name") or "").lower():
+            youtube_open = True
         routed.append(r)
     return routed
 
