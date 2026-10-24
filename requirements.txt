@@ -42,3 +42,12 @@ pytest
 # NOT needed for Vaayu's actual runtime, only to check the dataset against the
 # real tokenizer before spending Colab GPU time on it. Install manually if
 # using that script: pip install transformers jinja2
+
+# Speech model on the GPU (faster-whisper / CTranslate2 needs CUDA 12 cuBLAS + cuDNN 9;
+# loaded from these pip packages - no system CUDA install needed). Without them Vaayu
+# falls back to the CPU automatically.
+nvidia-cublas-cu12
+nvidia-cudnn-cu12==9.*
+
+# Speech-model evaluation only (scripts/stt_eval.py) - not needed to run Vaayu:
+# edge-tts (Indian-English test voices), soundfile, pyarrow (EdAcc corpus)

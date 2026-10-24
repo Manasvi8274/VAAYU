@@ -44,6 +44,9 @@ class STTConfig(BaseModel):
     # Devanagari for the Hindi portions - "hi" or leaving this unset are
     # available to try if "en" doesn't work well for you in practice.
     language: str = "en"
+    # "auto": GPU when it fits next to the 3B brain with a safety margin (the
+    # 4 GB limit), else CPU. "cpu"/"cuda" to force one.
+    device: str = "auto"
 
 
 class SpeakerVerificationConfig(BaseModel):

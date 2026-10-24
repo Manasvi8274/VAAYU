@@ -252,3 +252,11 @@ def test_play_resumes_a_paused_youtube_video():
     yp, tab, _ = _yt(False)
     with patch.object(media, "_youtube_video", return_value=(yp, tab, False)):
         assert media.control_media("play") == "Playing."
+
+
+def test_volume_goes_to_a_paused_youtube_that_is_on_screen():
+    # Real log: "reduce the volume to 0 percent" with YouTube paused on screen set the LAPTOP to 0%.
+    yp, tab, _ = _yt(False)
+    with patch.object(media, "_youtube_video", return_value=(yp, tab, False)),             patch.object(media, "_youtube_in_foreground", return_value=True):
+        assert media.control_media("volume_set", 0) == "YouTube volume is now 75%."
+    yp.set_volume.assert_called_once_with(level=0, tab=tab)

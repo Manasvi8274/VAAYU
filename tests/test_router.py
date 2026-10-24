@@ -221,3 +221,9 @@ def test_model_cannot_toggle_radios_on_its_own():
     with patch.object(type(registry), "dispatch") as dispatch:
         brain.respond([{"role": "user", "content": "brighten things up in here"}], registry)
     dispatch.assert_not_called()
+
+
+@pytest.mark.parametrize("text, level", [("Reduce it to 20 percent.", 20), ("bring it down to 30%", 30),
+                                         ("turn it up to 80 percent", 80), ("set it to 50%", 50)])
+def test_volume_change_without_the_word_volume(text, level):
+    assert router.fast_route(text) == ("tools", [("control_media", {"action": "volume_set", "level": level})])

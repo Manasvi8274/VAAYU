@@ -18,6 +18,7 @@ import ollama
 
 from assistant.llm import router
 from assistant.self_review import issue_log
+from assistant.tools import names
 from assistant.tools.registry import ToolRegistry
 
 _CODE_BLOCK_RE = re.compile(r"```.*?```", re.DOTALL)
@@ -165,6 +166,10 @@ class OllamaBrain:
         self.trace: list[dict] = []
 
     def _dispatch(self, registry: ToolRegistry, name: str, arguments: dict, path: str) -> dict:
+        heard = arguments
+        arguments = names.correct_arguments(name, arguments)  # "Ogru" -> "OG Crew" (see tools/names.py)
+        if arguments != heard:
+            self.trace.append({"path": path, "name_corrected": {"from": heard, "to": arguments}})
         result = registry.dispatch(name, arguments)
         self.trace.append({"path": path, "tool": name, "args": arguments, "ok": bool(result.get("ok")),
                            "result" if result.get("ok") else "error": str(result.get("result" if result.get("ok") else "error"))})

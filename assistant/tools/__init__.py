@@ -9,6 +9,7 @@ from assistant.tools import (  # noqa: F401
     dictation,
     files,
     media,
+    names,
     network_status,
     notes,
     orb_control,

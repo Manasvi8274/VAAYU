@@ -33,6 +33,8 @@ mitigates this somewhat, since irrelevant audio only matters if it happens
 to contain "Vaayu" alongside a control word.
 """
 
+import threading
+from pathlib import Path
 import time
 from datetime import datetime
 from enum import Enum
@@ -66,6 +68,31 @@ from assistant.tts.pyttsx3_engine import Pyttsx3Engine
 # did you not open youtube?") confused fresh commands.
 _HISTORY_USER_TURNS = 2  # this turn + the one before (enough to answer "which one?")
 _SAMPLE_RATE = 16000
+# Each heard command's audio is kept next to its log entry (data/audio/), so a
+# later fine-tune of the speech model on the user's own voice has real
+# recordings + what Vaayu heard. Local only; oldest deleted past the cap.
+_AUDIO_DIR = Path(__file__).resolve().parent.parent / "data" / "audio"
+_AUDIO_KEEP = 3000  # ~3 s each at 16 kHz mono int16 -> roughly 300 MB at most
+
+
+def _save_audio(audio) -> str | None:
+    try:
+        import wave
+        import numpy as np
+        _AUDIO_DIR.mkdir(parents=True, exist_ok=True)
+        path = _AUDIO_DIR / f"{datetime.now().strftime('%Y%m%d_%H%M%S_%f')[:-3]}.wav"
+        pcm = np.clip(np.asarray(audio, dtype=np.float32), -1, 1)
+        with wave.open(str(path), "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(_SAMPLE_RATE)
+            w.writeframes((pcm * 32767).astype(np.int16).tobytes())
+        old = sorted(_AUDIO_DIR.glob("*.wav"))
+        for f in old[:-_AUDIO_KEEP]:
+            f.unlink(missing_ok=True)
+        return path.name
+    except Exception:
+        return None  # a full disk etc. must never stop Vaayu listening
 
 
 # While the laptop is playing sound, the mic hears it: found live, Vaayu
@@ -74,25 +101,63 @@ _SAMPLE_RATE = 16000
 # sentences containing Vaayu's name count, and only the words after it. A
 # bare "Vaayu" opens a short window where the next sentence counts without it.
 _MEDIA_PEAK_THRESHOLD = 0.01  # calibration knob: Windows output meter peak (0-1) that counts as "playing"
+_MEDIA_RECENT_SECONDS = 4.0  # sound this recently = media is playing
 _NAME_WINDOW_SECONDS = 8
-_meter = None
+
+
+class _MediaMonitor:
+    """Samples the Windows output meter every 100 ms in the background.
+
+    A one-off check right after an utterance was not enough (found live): an
+    utterance ends on a pause, which is exactly when the video can be in a
+    quiet gap too, so 18 s of video speech got through as a command. Vaayu's
+    own voice is excluded, otherwise every reply would demand the name next."""
+
+    def __init__(self):
+        self.last_sound = 0.0
+        self.suppress_until = 0.0
+        threading.Thread(target=self._run, daemon=True).start()
+
+    def _run(self):
+        import comtypes
+        from pycaw.pycaw import AudioUtilities, IAudioMeterInformation
+        comtypes.CoInitialize()
+        meter = None
+        while True:
+            try:
+                if meter is None:
+                    dev = AudioUtilities.GetSpeakers()._dev
+                    meter = dev.Activate(IAudioMeterInformation._iid_, comtypes.CLSCTX_ALL, None) \
+                        .QueryInterface(IAudioMeterInformation)
+                self.observe(meter.GetPeakValue())
+            except Exception:
+                meter = None  # device changed (headphones plugged in...) - reacquire
+                time.sleep(1)
+            time.sleep(0.1)
+
+    def observe(self, peak: float, now: float | None = None) -> None:
+        now = time.time() if now is None else now
+        if peak > _MEDIA_PEAK_THRESHOLD and now > self.suppress_until:
+            self.last_sound = now
+
+    def playing(self, now: float | None = None) -> bool:
+        return (time.time() if now is None else now) - self.last_sound < _MEDIA_RECENT_SECONDS
+
+
+_monitor: "_MediaMonitor | None" = None
+
+
+def _media_monitor() -> "_MediaMonitor":
+    global _monitor
+    if _monitor is None:
+        _monitor = _MediaMonitor()
+    return _monitor
 
 
 def _media_playing() -> bool:
-    global _meter
     try:
-        if _meter is None:
-            from comtypes import CLSCTX_ALL
-            from pycaw.pycaw import AudioUtilities, IAudioMeterInformation
-            dev = AudioUtilities.GetSpeakers()._dev
-            _meter = dev.Activate(IAudioMeterInformation._iid_, CLSCTX_ALL, None).QueryInterface(IAudioMeterInformation)
-        peak = 0.0
-        for _ in range(5):  # ~0.2 s - one reading can land in a quiet gap
-            peak = max(peak, _meter.GetPeakValue())
-            time.sleep(0.04)
-        return peak > _MEDIA_PEAK_THRESHOLD
+        return _media_monitor().playing()
     except Exception:
-        _meter = None
         return False
 
 
@@ -122,7 +187,8 @@ class Orchestrator:
         else:
             self.activator = HotkeyActivator(config.activation.hotkey)
 
-        self.stt = WhisperSTT(model_size=config.stt.whisper_model_size, language=config.stt.language)
+        self.stt = WhisperSTT(model_size=config.stt.whisper_model_size, language=config.stt.language,
+                              device=config.stt.device)
         self.tts = Pyttsx3Engine(rate=config.tts.rate)
         self.brain = OllamaBrain(host=config.llm.host, model=config.llm.model)
         self.messages = [{"role": "system", "content": SYSTEM_PROMPT}]
@@ -142,6 +208,8 @@ class Orchestrator:
     def _speak(self, text: str) -> None:
         if self.continuous:
             self.listener.mute()
+        if _monitor is not None:
+            _monitor.suppress_until = float("inf")  # Vaayu's own voice isn't "media"
         try:
             if self.gui_queue is not None:
                 self.tts.speak_with_amplitude(
@@ -151,6 +219,8 @@ class Orchestrator:
             else:
                 self.tts.speak(text)
         finally:
+            if _monitor is not None:
+                _monitor.suppress_until = time.time() + 0.6  # the speaker's tail after playback ends
             if self.continuous:
                 self.listener.unmute()
 
@@ -246,7 +316,7 @@ class Orchestrator:
 
         print(f"You said: {text}")
         interaction_log.log_event("heard", text=text, state=self.state.value, audio_seconds=audio_seconds,
-                                  stt_ms=stt_time.ms)
+                                  stt_ms=stt_time.ms, audio_file=_save_audio(audio))
         command = detect_control_command(text)
         if command is not ControlCommand.NONE:
             interaction_log.log_event("control", command=command.value, text=text, state=self.state.value)
@@ -318,6 +388,7 @@ class Orchestrator:
                                   speak_ms=speak_time.ms, stt_ms=stt_time.ms, failed=error is not None)
 
     def run_forever(self) -> None:
+        _media_monitor()  # start watching the sound level before the first command
         if self.continuous:
             self.listener.start()
             print(

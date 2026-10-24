@@ -36,6 +36,16 @@ def _youtube_video():
         return None
 
 
+def _youtube_in_foreground() -> bool:
+    """The window in front is a browser showing YouTube ("... - YouTube - Brave")."""
+    try:
+        import win32gui
+        title = win32gui.GetWindowText(win32gui.GetForegroundWindow())
+        return "YouTube" in title and any(b in title for b in ("Brave", "Chrome", "Edge", "Comet"))
+    except Exception:
+        return False
+
+
 def _on_youtube(action: str, level: int | None):
     found = _youtube_video()
     if not found:
@@ -47,7 +57,11 @@ def _on_youtube(action: str, level: int | None):
         if playing:
             return yp.pause(tab) if action == "play_pause" else "It's already playing."
         return yp.play(tab)
-    if not playing:  # a paused YouTube tab shouldn't capture volume/next meant for something else
+    # A paused YouTube tab in the background shouldn't capture volume/next meant
+    # for something else - but if YouTube is the window the user is looking at,
+    # it's what they mean (found live: "reduce the volume to 0 percent" with
+    # YouTube paused on screen set the LAPTOP to 0%).
+    if not playing and not _youtube_in_foreground():
         return None
     if action == "next":
         return yp.next_video(tab)

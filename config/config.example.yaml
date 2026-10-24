@@ -20,7 +20,8 @@ tts:
   rate: 210   # pyttsx3 words-per-minute; 210 = 1.2x the original 175 default
 
 stt:
-  whisper_model_size: "base"  # multilingual model - needed for Hinglish; base.en can't produce Hindi tokens
+  whisper_model_size: "small"  # multilingual (needed for Hinglish); small is much better with accents than base
+  device: "auto"               # GPU if it fits next to the LLM with a safety margin, else CPU
   language: "en"               # keeps output in Roman script (how Hinglish is normally typed); try "hi" as an alternative
 
 speaker_verification:

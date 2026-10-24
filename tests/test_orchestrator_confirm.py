@@ -211,3 +211,42 @@ def test_no_name_needed_when_nothing_is_playing(monkeypatch):
     orch = _awake("pause", monkeypatch, media=False)
     orch.handle_one_turn()
     orch.brain.respond.assert_called_once()
+
+
+def _monitor():
+    from assistant.orchestrator import _MediaMonitor
+    m = _MediaMonitor.__new__(_MediaMonitor)  # no background thread
+    m.last_sound, m.suppress_until = 0.0, 0.0
+    return m
+
+
+def test_media_counts_as_playing_through_a_quiet_gap():
+    # Real log: an utterance ends on a pause - exactly when the video can be quiet too.
+    m = _monitor()
+    m.observe(0.3, now=100.0)
+    m.observe(0.0, now=101.0)  # quiet gap in the video
+    assert m.playing(now=102.5)
+    assert not m.playing(now=110.0)
+
+
+def test_vaayus_own_voice_is_not_media():
+    m = _monitor()
+    m.suppress_until = 200.0
+    m.observe(0.5, now=199.0)
+    assert not m.playing(now=199.5)
+
+
+
+def test_saved_audio_is_a_playable_wav_and_old_files_are_pruned(tmp_path, monkeypatch):
+    import wave
+    import numpy as np
+    from assistant import orchestrator
+    monkeypatch.setattr(orchestrator, "_AUDIO_DIR", tmp_path)
+    monkeypatch.setattr(orchestrator, "_AUDIO_KEEP", 2)
+    save = orchestrator._real_save_audio  # the suite-wide stub replaces _save_audio itself
+    names = [save(np.full(1600, 0.5, dtype=np.float32)) for _ in range(3)]
+    assert all(names)
+    left = sorted(p.name for p in tmp_path.glob("*.wav"))
+    assert len(left) == 2 and names[-1] in left
+    with wave.open(str(tmp_path / names[-1])) as w:
+        assert (w.getframerate(), w.getnchannels(), w.getnframes()) == (16000, 1, 1600)

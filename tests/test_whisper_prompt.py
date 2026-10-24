@@ -18,3 +18,15 @@ def test_vocab_prompt_fits_in_whispers_prompt_window():
 
 def test_name_is_at_the_end_where_whisper_never_truncates():
     assert _VOCAB_PROMPT.rstrip().endswith("Vaayu.")
+
+
+def test_one_word_commands_are_kept_but_noise_words_are_not(monkeypatch):
+    # The 2-word minimum silently dropped "pause", "mute", "next" spoken alone.
+    from types import SimpleNamespace
+    from assistant.stt import whisper_stt
+    stt = whisper_stt.WhisperSTT.__new__(whisper_stt.WhisperSTT)
+    stt.language = "en"
+    for heard, kept in [("Pause.", True), ("mute", True), ("Next!", True), ("you", False), ("Thank you.", True),
+                        ("Bye.", False)]:
+        stt.model = SimpleNamespace(transcribe=lambda audio, **kw: ([SimpleNamespace(text=heard)], None))
+        assert (stt.transcribe(None) != "") == kept, heard

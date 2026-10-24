@@ -42,24 +42,76 @@ _VOCAB_PROMPT = (
 )
 
 
+# One-word commands are real ("pause", "mute") - the 2-word minimum above
+# silently dropped every one of them. These pass; other single words (the
+# usual noise hallucinations: "you", "Thank you", "Bye") still don't.
+_ONE_WORD_COMMANDS = {"pause", "play", "resume", "stop", "mute", "unmute", "next", "previous", "louder", "quieter",
+                      "skip", "vaayu", "vayu", "replay", "restart", "fullscreen", "screenshot", "minimize"}
+
+# Approximate extra VRAM per model on the GPU (int8_float16, measured on the
+# GTX 1650 with the 3B brain loaded: small +348 MiB, large-v3-turbo +964 MiB).
+_GPU_MIB = {"tiny": 200, "base": 250, "small": 400, "medium": 900, "large-v3-turbo": 1000, "turbo": 1000}
+_GPU_MARGIN_MIB = 300  # left free for Windows/browser so the 4 GB card never overflows
+
+
+def _load_cuda_libraries() -> None:
+    """NVIDIA's cuBLAS/cuDNN come as pip packages (nvidia-cublas-cu12,
+    nvidia-cudnn-cu12); Windows only finds their DLLs if told where."""
+    import os
+    try:
+        import nvidia.cublas
+        import nvidia.cudnn
+    except ImportError:
+        return
+    for mod in (nvidia.cublas, nvidia.cudnn):
+        d = os.path.join(list(mod.__path__)[0], "bin")
+        if os.path.isdir(d):
+            os.add_dll_directory(d)
+            os.environ["PATH"] = d + os.pathsep + os.environ.get("PATH", "")
+
+
+def _gpu_free_mib() -> int:
+    import subprocess
+    try:
+        out = subprocess.run(["nvidia-smi", "--query-gpu=memory.total,memory.used", "--format=csv,noheader,nounits"],
+                             capture_output=True, text=True, timeout=5).stdout
+        total, used = (int(x) for x in out.strip().splitlines()[0].split(","))
+        return total - used
+    except Exception:
+        return 0
+
+
 class WhisperSTT:
     def __init__(
         self,
         model_size: str = "base",
-        compute_type: str = "int8",
-        device: str = "cpu",
+        compute_type: str | None = None,
+        device: str = "auto",
         language: str = "en",
     ):
-        # faster-whisper's "auto" device detection can find a GPU but then
-        # crash if the matching CUDA/cuBLAS runtime isn't installed, instead
-        # of falling back to CPU - force CPU explicitly since that's this
-        # project's target (see PLAN.md), rather than relying on autodetection.
+        # model_size is multilingual (no ".en" models) - English-only models
+        # are architecturally incapable of producing Hindi/Hinglish tokens.
         #
-        # model_size defaults to "base" (multilingual), NOT "base.en" -
-        # English-only models are architecturally incapable of producing
-        # Hindi/Hinglish tokens at all, regardless of prompting.
-        self.model = WhisperModel(model_size, device=device, compute_type=compute_type)
+        # device "auto": the GPU when the CUDA libraries load AND there's room
+        # for the model plus a safety margin (so the 4 GB card shared with the
+        # 3B brain never overflows), otherwise the CPU. faster-whisper's own
+        # "auto" can't be used - it picks the GPU and then crashes if the CUDA
+        # runtime is missing, instead of falling back.
         self.language = language
+        self.device = "cpu"
+        if device in ("auto", "cuda"):
+            need = _GPU_MIB.get(model_size, 1000) + _GPU_MARGIN_MIB
+            if _gpu_free_mib() >= need:
+                try:
+                    _load_cuda_libraries()
+                    self.model = WhisperModel(model_size, device="cuda", compute_type=compute_type or "int8_float16")
+                    self.device = "cuda"
+                    return
+                except Exception as exc:  # no usable CUDA runtime - fall back, don't crash
+                    print(f"Vaayu: speech model can't use the GPU ({exc}) - using the CPU.")
+            else:
+                print(f"Vaayu: not enough free GPU memory for the '{model_size}' speech model - using the CPU.")
+        self.model = WhisperModel(model_size, device="cpu", compute_type=compute_type or "int8")
 
     def transcribe(self, audio: np.ndarray) -> str:
         # vad_filter=True runs faster-whisper's built-in (Silero) VAD as a
@@ -73,6 +125,7 @@ class WhisperSTT:
         )
         text = " ".join(segment.text.strip() for segment in segments).strip()
 
-        if len(text.split()) < _MIN_WORDS:
+        words = text.split()
+        if len(words) < _MIN_WORDS and not (words and words[0].strip(".,!?").lower() in _ONE_WORD_COMMANDS):
             return ""
         return text

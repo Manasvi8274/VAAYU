@@ -160,6 +160,8 @@ _YT_RULES = [(re.compile(p, re.I), build) for p, build in _YT_RULES]
 # "volume to 75", "volume down to 75%", "awaz 40 par karo", "Picture volume level, 75%" (a real
 # mis-transcription of "set volume level 75%"): a volume word plus exactly one number means set it.
 _VOLUME_WORD = re.compile(r"\b(?:volume|sound|awaa?z)\b", re.I)
+_BARE_LEVEL = re.compile(r"^(?:reduce|lower|decrease|drop|increase|raise|bring|turn|set|make|put)(?: it| that| this)?"
+                         r"(?: down| up| back)?(?: to| at)? (?P<n>\d{1,3})(?: ?%| percent)$", re.I)
 _VOLUME_NUMBER = re.compile(r"\b(\d{1,3})(?:\.\d+)?\s?(?:%|percent)?(?!\s*(?:seconds?|secs?|minutes?|mins?|x\b))", re.I)
 
 _OPEN_VERB = r"(?:open|launch|start|fire up|bring up|run)"
@@ -279,6 +281,8 @@ _LOCAL_HINT = re.compile(r"\b(file|files|folder|documents|desktop|downloads|my c
 _TYPE = re.compile(r"^(?:type|write)(?: out)? (?P<text>.+?)(?: in (?:notepad|word|here|the document))?$|^likho (?P<t2>.+)$|^(?P<t3>.+) likho$", re.I)
 _NOTE = re.compile(r"^(?:note that|note down|make a note(?: that)?|add a note(?: that| saying)?|save a note(?: that| saying)?|"
                    r"remember (?:that|to)) (?P<text>.+)$|^yaad rakhna (?P<t2>.+)$|^note (?P<t3>.+)$", re.I)
+_REMEMBER_NAME = re.compile(r"^(?:remember|save|add|learn)(?: the| my)? (?P<k>channel|contact|app) (?:name )?(?P<n>.+?)"
+                            r"(?: to my (?:channels|contacts|apps))?$", re.I)
 _LIST_NOTES = re.compile(r"^(?:show|read|list)(?: me)?(?: all)? my(?: last \d+)? notes$|^what are my notes$|^mere notes (?:dikhao|batao)$", re.I)
 
 # WhatsApp - the ONLY way a recipient gets chosen: parsed verbatim from the
@@ -416,6 +420,9 @@ def _route_one(t: str):
         if re.search(r"\bvideo\b", t, re.I):  # the player's own volume on any site (YouTube handled inside)
             return ("tool", "set_video_volume", {"level": level})
         return ("tool", "control_media", {"action": "volume_set", "level": level})
+    # "Reduce it to 20 percent" (real log) - a volume change with no "volume" word in it.
+    if m := _BARE_LEVEL.match(t):
+        return ("tool", "control_media", {"action": "volume_set", "level": min(int(m.group("n")), 100)})
     for pattern, action in _MEDIA:
         if pattern.match(t):
             return ("tool", "control_media", {"action": action})
@@ -465,6 +472,8 @@ def _route_one(t: str):
         routed = _tab_target(m.group("q") or m.group("q2"), "switch_to_browser_tab")
         if routed:
             return routed
+    if m := _REMEMBER_NAME.match(t):
+        return ("tool", "remember_name", {"kind": m.group("k").lower(), "name": m.group("n").strip()})
     if _LIST_NOTES.match(t):
         return ("tool", "list_notes", {})
     if m := _NOTE.match(t):

@@ -113,6 +113,7 @@ def _no_real_volume_or_youtube_changes():
     from assistant.tools import media
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(media, "_youtube_video", lambda: None)
+        mp.setattr(media, "_youtube_in_foreground", lambda: False)
         mp.setattr(media, "_endpoint", lambda: MagicMock(GetMasterVolumeLevelScalar=lambda: 0.5, GetMute=lambda: 0))
         yield
 
@@ -125,4 +126,23 @@ def _no_real_audio_meter():
     from assistant import orchestrator
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(orchestrator, "_media_playing", lambda: False)
+        yield
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _isolated_known_names(tmp_path_factory):
+    # remember_name writes the user's real data/known_names.json - tests may not.
+    from assistant.tools import names
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(names, "PATH", tmp_path_factory.mktemp("names") / "known_names.json")
+        yield
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _no_real_audio_saving():
+    # handle_one_turn saves each utterance to the real data/audio/ - tests may not.
+    from assistant import orchestrator
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(orchestrator, "_real_save_audio", orchestrator._save_audio, raising=False)
+        mp.setattr(orchestrator, "_save_audio", lambda audio: None)
         yield
