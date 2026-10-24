@@ -10,12 +10,14 @@ Noise: a fresh room-noise recording, not the eval's.
 
     python scripts/stt_finetune.py prepare
     python scripts/stt_finetune.py train          # stop Ollama first - needs the whole GPU
+    python scripts/stt_finetune.py prepare rounds=2 && python scripts/stt_finetune.py train round=2 epochs=1
     python scripts/stt_eval.py run small:cuda models/whisper-small-vaayu:cuda
 """
 
 import asyncio
 import json
 import random
+import re
 import sys
 from pathlib import Path
 
@@ -100,16 +102,17 @@ def prepare(rounds=1):
     asyncio.run(_tts_all(jobs))
     eval_speakers = {it["voice"] for it in json.loads((ROOT / "data/datasets/stt_eval/items.json").read_text())
                      if it["kind"] == "edacc"}
-    for f in sorted((ROOT / "data/datasets/edacc").glob("validation-*.parquet")):
-        for j, r in enumerate(pq.read_table(f).to_pylist()):
-            if r["accent"] != "Indian English" or r["speaker"] in eval_speakers or "<" in r["text"]:
+    for f in sorted((ROOT / "data/datasets/edacc").glob("*.parquet")):  # every split; eval speakers excluded
+        rows = pq.read_table(f, filters=[("accent", "=", "Indian English")]).to_pylist()
+        for j, r in enumerate(rows):
+            if r["speaker"] in eval_speakers or "<" in r["text"]:
                 continue
             audio = decode_audio(io.BytesIO(r["audio"]["bytes"]), sampling_rate=16000)
             if not 1 < len(audio) / 16000 < 29 or len(r["text"].split()) < 3:
                 continue
-            wav = OUT / "clips" / f"edacc_{f.stem[:16]}_{j:05d}.wav"
+            wav = OUT / "clips" / f"edacc_{f.stem[:16]}_{r['speaker']}_{j:05d}.wav"
             sf.write(wav, audio, 16000)
-            items.append({"text": r["text"], "path": str(wav), "src": "edacc"})
+            items.append({"text": _clean_edacc(r["text"]), "path": str(wav), "src": "edacc"})
     mine = ROOT / "data" / "my_voice" / "index.jsonl"
     if mine.exists():  # the user's own voice, weighted x3
         for line in mine.read_text(encoding="utf-8").splitlines():
@@ -119,12 +122,22 @@ def prepare(rounds=1):
     print(f"prepared {len(items)} clips:", {s: sum(it['src'] == s for it in items) for s in ("tts", "edacc", "mine")})
 
 
+def _clean_edacc(text):
+    """EdAcc labels are ALL CAPS with fillers ("UH YEAH SO...") - round 1 learned to
+    answer in capitals. Plain case, no fillers, like Whisper's own style."""
+    t = re.sub(r"\b(?:uh+|um+|uhm|hmm+|er+|ah+|mm+)\b", " ", text.lower())
+    t = re.sub(r"\bi\b", "I", re.sub(r"\s+", " ", t)).strip()
+    return t or text
+
+
 def _target(text):
     text = text.strip()
     return text[0].upper() + text[1:] + ("" if text[-1] in ".?!" else ".")
 
 
-def train(epochs=2, batch=4, accum=4, lr=1e-4):
+def train(epochs=2, batch=4, accum=4, lr=1e-4, round=1):
+    """round 1: stock small on everything. round N: continues from round N-1's merged
+    model, on that round's new sentences plus the real speech."""
     import numpy as np
     import psutil
     import torch
@@ -137,6 +150,11 @@ def train(epochs=2, batch=4, accum=4, lr=1e-4):
     tok = proc.tokenizer
     prompt = list(tok.get_prompt_ids(_VOCAB_PROMPT))
     items = json.loads((OUT / "items.json").read_text(encoding="utf-8"))
+    if round > 1:
+        items = [it for it in items if it["src"] != "tts" or Path(it["path"]).name.startswith(f"r{round}_")]
+    base = "openai/whisper-small" if round == 1 else str(OUT / f"hf_model_r{round - 1}")
+    model_out = MODEL_OUT if round == 1 else MODEL_OUT.with_name(f"{MODEL_OUT.name}-r{round}")
+    print(f"round {round}: {len(items)} clips from {base}", flush=True)
     noise = np.load(OUT / "room_noise.npy")
     rng = np.random.default_rng(1)
 
@@ -152,7 +170,7 @@ def train(epochs=2, batch=4, accum=4, lr=1e-4):
         full = prompt + tok(" " + _target(it["text"])).input_ids  # Vaayu always transcribes with the prompt
         return feats, full, len(prompt)
 
-    model = WhisperForConditionalGeneration.from_pretrained("openai/whisper-small")
+    model = WhisperForConditionalGeneration.from_pretrained(base)
     model.config.forced_decoder_ids = None
     model = get_peft_model(model, LoraConfig(r=16, lora_alpha=32, lora_dropout=0.05,
                                               target_modules=["q_proj", "k_proj", "v_proj", "out_proj"]))
@@ -163,7 +181,7 @@ def train(epochs=2, batch=4, accum=4, lr=1e-4):
     sched = torch.optim.lr_scheduler.OneCycleLR(opt, max_lr=lr, total_steps=steps + 1, pct_start=0.1)
     scaler = torch.cuda.amp.GradScaler()
     eot = tok.eos_token_id
-    step, ckpt = 0, OUT / "checkpoint.pt"
+    step, ckpt = 0, OUT / f"checkpoint_r{round}.pt"
     if ckpt.exists():  # resume after a stop - progress is saved every 20 steps
         state = torch.load(ckpt, weights_only=False)
         set_peft_model_state_dict(model, state["lora"])
@@ -201,18 +219,20 @@ def train(epochs=2, batch=4, accum=4, lr=1e-4):
                     torch.save({"lora": get_peft_model_state_dict(model), "opt": opt.state_dict(),
                                 "sched": sched.state_dict(), "scaler": scaler.state_dict(), "step": step}, ckpt)
     merged = model.merge_and_unload()
-    hf_dir = OUT / "hf_model"
+    hf_dir = OUT / f"hf_model_r{round}"
     merged.save_pretrained(hf_dir)
     proc.save_pretrained(hf_dir)
     proc.feature_extractor.save_pretrained(hf_dir)  # transformers 5 writes processor_config.json; ct2 wants preprocessor_config.json
     import ctranslate2.converters
     ctranslate2.converters.TransformersConverter(
         str(hf_dir), copy_files=["tokenizer.json", "preprocessor_config.json"]
-    ).convert(str(MODEL_OUT), quantization="int8_float16", force=True)
+    ).convert(str(model_out), quantization="int8_float16", force=True)
     ckpt.unlink(missing_ok=True)
-    print("saved", MODEL_OUT)
+    print("saved", model_out)
 
 
 if __name__ == "__main__":
     sys.stdout.reconfigure(encoding="utf-8")
-    {"prepare": prepare, "train": train}[sys.argv[1]](*map(int, sys.argv[2:]))
+    import ast
+    kwargs = {k: ast.literal_eval(v) for k, v in (a.split("=") for a in sys.argv[2:])}  # e.g. train round=2 epochs=1
+    {"prepare": prepare, "train": train}[sys.argv[1]](**kwargs)
