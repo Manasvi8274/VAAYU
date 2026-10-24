@@ -135,6 +135,30 @@ _TOOL_TOPIC = re.compile(r"\b(?:battery|charg\w*|wi-?fi|internet|bluetooth|awaa?
                          r"spreadsheet|documents?|pdf|excel|firefox|auto|quality|\d+p)\b", re.I)
 _PERSONAL = re.compile(r"\b(?:i|i'm|im|i've|i'd|my|me|myself|mujhe|mujhko|mera|meri|mere|main|mai|hum|life|feel|"
                        r"feeling|bhai|tum|tu|aap|you think|advice|opinion)\b", re.I)
+_DEVANAGARI = re.compile(r"[ऀ-ॿ]")
+# Few-shot turns: told only in words, the 3B model answered Hinglish in Devanagari.
+_CHAT_EXAMPLES = [
+    {"role": "user", "content": "bhai aaj padhai ka bilkul mann nahi hai"},
+    {"role": "assistant", "content": "Hota hai bhai, har din josh nahi rehta. Bas 25 minute ka timer laga aur ek chhota "
+                                     "topic utha - shuru karna hi sabse mushkil hai, baaki apne aap chalega."},
+    {"role": "user", "content": "I keep putting off my workouts"},
+    {"role": "assistant", "content": "Then make it too small to skip - ten minutes, same time every day. Once it's a "
+                                     "habit you can make it longer. Consistency beats intensity."},
+]
+
+
+def _romanize(text: str) -> str:
+    """Last resort for a Devanagari reply: Roman letters the voice can read ("क्या हाल है" -> "kya hal hai")."""
+    import unicodedata
+    try:
+        from indic_transliteration import sanscript
+    except ImportError:
+        return "Sorry bhai, I got my words mixed up - ask me once more?"
+    out = re.sub(r"(?<=[^\Waāiīuū])a\b", "", sanscript.transliterate(text, sanscript.DEVANAGARI, sanscript.IAST))
+    out = out.replace("ṃ", "n").replace("|", ".").replace("।", ".")  # anusvara, danda
+    return "".join(c for c in unicodedata.normalize("NFKD", out) if not unicodedata.combining(c))
+
+
 _FORGET_ALL = re.compile(r"^(?:forget|bhool jao?) (?:everything|all of it|sab kuch|sab)\b.*$|"
                          r"^forget (?:what|everything) i (?:told|said to) you$", re.I)
 _FORGET_ABOUT = re.compile(r"^forget (?:what i (?:told|said to) you |everything i (?:told|said to) you )?about (?P<a>.+)$|"
@@ -261,14 +285,24 @@ class OllamaBrain:
         history = []
         for turn in memory.recent_turns(_CHAT_TURNS):
             history += [{"role": "user", "content": turn["user"]}, {"role": "assistant", "content": turn["reply"]}]
-        response = self.client.chat(
-            model=self.model,
-            messages=[{"role": "system", "content": system}, *history, {"role": "user", "content": user_text}],
-            keep_alive=_KEEP_ALIVE,
-            think=_THINK,
-            options={"num_ctx": 4096, "num_predict": 200, "temperature": _CHAT_TEMPERATURE},
-        )
-        reply = _sanitize_reply(response["message"].get("content", ""), max_sentences=4)
+        convo = [{"role": "system", "content": system}, *_CHAT_EXAMPLES, *history, {"role": "user", "content": user_text}]
+        for attempt in range(2):
+            response = self.client.chat(
+                model=self.model,
+                messages=convo,
+                keep_alive=_KEEP_ALIVE,
+                think=_THINK,
+                options={"num_ctx": 4096, "num_predict": 200, "temperature": _CHAT_TEMPERATURE if attempt == 0 else 0.3},
+            )
+            reply = _sanitize_reply(response["message"].get("content", ""), max_sentences=4)
+            if not _DEVANAGARI.search(reply):
+                break
+            # Live: the 3B model answered Hinglish in Devanagari, which the English voice can't speak.
+            self.trace.append({"path": "chat", "devanagari_retry": True})
+            convo = convo + [{"role": "system", "content": "Write the reply again in Hinglish using ONLY English "
+                                                           "(Roman) letters, like: 'Bhai, tension mat le.'"}]
+        if _DEVANAGARI.search(reply):
+            reply = _romanize(reply)
         return reply, messages + [{"role": "assistant", "content": reply}]
 
     def respond(
