@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from assistant import memory
+from assistant.llm import ollama_client
 from assistant.llm.ollama_client import OllamaBrain, _is_conversation
 from assistant.tools.registry import ToolRegistry
 
@@ -106,7 +107,7 @@ def test_chat_uses_persona_memory_and_no_tools(brain, registry):
     assert "tools" not in kwargs and kwargs["options"]["num_predict"] == 200
     system = kwargs["messages"][0]["content"]
     assert "elder brother" in system and "Has an exam on Monday." in system
-    assert kwargs["messages"][1:] == [{"role": "user", "content": "I'm nervous"},
+    assert kwargs["messages"][1 + len(ollama_client._CHAT_EXAMPLES):] == [{"role": "user", "content": "I'm nervous"},
                                       {"role": "assistant", "content": "That's normal."},
                                       {"role": "user", "content": "I feel stuck in my job, what should I do?"}]
     assert brain.trace == [{"path": "chat"}]
@@ -166,3 +167,13 @@ def test_orchestrator_logs_every_turn_and_learns_from_chat(monkeypatch, path, le
     orch.handle_one_turn()
     assert [(t["user"], t["reply"]) for t in memory.recent_turns()] == [("I had a rough day", "Kya hua bhai?")]
     assert learn.called is learns
+
+
+def test_devanagari_chat_reply_is_retried_then_romanized():
+    with patch("assistant.llm.ollama_client.ollama.Client"):
+        brain = OllamaBrain(host="http://fake", model="m")
+    brain.client = MagicMock()
+    brain.client.chat.return_value = {"message": {"role": "assistant", "content": "ठीक है भाई, चिंता मत कर।"}}
+    reply, _ = brain._chat([], "bhai tension ho rahi hai")
+    assert brain.client.chat.call_count == 2  # one retry asking for Roman letters
+    assert not ollama_client._DEVANAGARI.search(reply) and reply.startswith("thik hai bhai")
