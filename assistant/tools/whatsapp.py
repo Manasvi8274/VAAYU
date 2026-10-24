@@ -103,11 +103,18 @@ def _type_into(selector_js: str, text: str) -> bool:
 def _click_first_search_result(contact_name: str) -> bool:
     js = f"""
     (() => {{
-        const target = {json.dumps(contact_name)}.toLowerCase();
+        // EXACT chat-title match only (case/whitespace-insensitive). A plain
+        // innerText.includes() matched "mom" inside "Mommy" or inside any
+        // chat whose last-message preview happened to contain the word.
+        const norm = s => (s || '').toLowerCase().replace(/\s+/g, ' ').trim();
+        const target = norm({json.dumps(contact_name)});
         const rows = Array.from(document.querySelectorAll(
             '[data-testid="cell-frame-container"], div[role="listitem"], div[role="row"]'
         ));
-        const match = rows.find(el => (el.innerText || '').toLowerCase().includes(target));
+        const match = rows.find(el => {{
+            const title = el.querySelector('span[title]');
+            return title && norm(title.getAttribute('title')) === target;
+        }});
         if (!match) return false;
         match.click();
         return true;
@@ -135,8 +142,8 @@ def _last_outgoing_message_text() -> str | None:
         "Compose and send a WhatsApp message to a contact by name, via WhatsApp Web. This is a "
         "sensitive action - the orchestrator automatically speaks the message back and requires a "
         "real spoken 'yes' before it actually sends, so just call this tool directly with the "
-        "message you'd send; do not ask for confirmation yourself in text first. Write the message "
-        "text naturally based on what the user asked for."
+        "message; do not ask for confirmation yourself in text first. The message must be the user's "
+        "own words exactly - never rewrite, expand or invent message text."
     ),
     parameters={
         "type": "object",
@@ -168,7 +175,7 @@ def send_whatsapp_message(contact_name: str, message: str) -> str:
     time.sleep(_STEP_WAIT_SECONDS)
 
     if not _click_first_search_result(contact_name):
-        raise ValueError(f"No WhatsApp contact/chat found matching '{contact_name}'.")
+        raise ValueError(f"'{contact_name}' is not in your WhatsApp chats - nothing was sent.")
     time.sleep(_STEP_WAIT_SECONDS)
 
     if not _type_into(_MESSAGE_BOX_SELECTOR, message):

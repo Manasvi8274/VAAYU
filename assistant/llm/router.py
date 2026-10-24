@@ -26,33 +26,44 @@ import re
 from assistant.tools.registry import ToolRegistry
 
 _LEAD = re.compile(
-    r"^(?:(?:hey|ok|okay|so|okay so|ok so|and|um+|uh+|hmm+)\s+)*(?:vaa?yu\s+)?"
+    r"^(?:(?:hey|ok|okay|so|okay so|ok so|and|um+|uh+|hmm+|hold on|let's|lets)\s+)*(?:vaa?yu\s+)?"
     r"(?:(?:please|pls|can you|could you|would you|will you|zara|just)\s+)*", re.I)
-_TAIL = re.compile(r"(?:\s+(?:please|pls|for me|na|yaar|now|right now|bhai|jaldi))+$", re.I)
-_FILLER_WORDS = re.compile(r"\b(?:um+|uh+|hmm+|erm)\b", re.I)
-# Speech-to-text punctuation: drop it, except inside "google.com" or "10:30".
-_PUNCT = re.compile(r"\.\.\.|(?<![a-z0-9])[.:]|[.:](?![a-z0-9])|[,!?;\"]", re.I)
+_TAIL = re.compile(r"(?:\s+(?:please|pls|for me|na|yaar|now|right now|bhai|jaldi|quickly|a bit|a little|"
+                   r"jaldi se|vaa?yu))+$", re.I)
+_FILLER_WORDS = re.compile(r"\b(?:um+|uh+|hmm+|erm|thoda|zara)\b", re.I)
+# Speech-to-text punctuation: drop it, except inside "google.com"/"10:30" and
+# a ": " separator, which the WhatsApp "to X: message" shape needs.
+_PUNCT = re.compile(r"\.\.\.|(?<![a-z0-9])\.|\.(?![a-z0-9])|[,!?;\"]", re.I)
 
 # Words that mean the target is a tab/page/file, not an installed app.
 _NOT_AN_APP = re.compile(
     r"\b(tab|tabs|page|website|site|folder|video|song|music|link|url|channel|window|message|"
-    r"note|notes|vaa?yu|fullscreen|full screen|volume|sound|screen|laptop|computer)\b|"
+    r"note|notes|vaa?yu|fullscreen|full screen|volume|sound|screen|laptop|computer|wi-?fi|bluetooth|it|"
+    r"gaana|song|music)\b|"
     r"\bfile\b(?! explorer| manager)|\.com|\.in|\.org| on | to | and | then ",
     re.I,
 )
 _SITE = r"(?:youtube|hotstar|netflix|prime video|spotify|jiocinema|zee5|sonyliv)"
 
+_SONG = r"(?:song|track|music|gaana|gana)"
+_KARO = r"(?:karo|kar do|kardo|kar de|karde|kro)"
 _MEDIA = [
-    (r"(?:pause|play|resume|stop)(?: (?:it|the music|music|the song|song|media|playback))?|"
-     r"(?:gaana |music )?(?:ruko|rok do|roko|chalao|chala do)", "play_pause"),
-    (r"(?:play )?(?:the )?next(?: song| track)?|skip(?: this| the)?(?: song| track)?|agla gaana(?: chalao| lagao)?", "next"),
-    (r"(?:play )?(?:the )?(?:previous|prev)(?: song| track)?|(?:go back to |play )?the (?:last|previous) (?:song|track)|"
-     r"pichla gaana(?: chalao| lagao)?", "previous"),
-    (r"(?:increase|raise|turn up|boost)(?: the)?(?: system)? (?:volume|sound)|(?:system )?volume (?:up|badhao|badha do|tez karo|increase karo)|"
-     r"awaa?z (?:badhao|badha do|tez karo|badhado)|(?:make it )?louder", "volume_up"),
-    (r"(?:decrease|lower|reduce|turn down)(?: the)?(?: system)? (?:volume|sound)|(?:system )?volume (?:down|kam karo|kam kar do|ghatao)|"
-     r"awaa?z (?:kam karo|kam kar do|dheere karo|dheemi karo)|(?:make it )?(?:quieter|softer)", "volume_down"),
-    (r"mute(?: the)?(?: (?:system|volume|sound|audio|laptop|computer|speakers?))?|(?:awaa?z|sound|volume) band (?:karo|kar do)", "mute"),
+    (rf"(?:pause|play|resume|stop|continue|keep playing|continue playing)(?: (?:it|the music|music|the song|song|media|playback|playing))?|"
+     rf"(?:{_SONG} )?(?:ruko|rok do|roko|chalao|chala do)|{_SONG} (?:band {_KARO}|pause {_KARO}|rok do|roko|stop {_KARO})|"
+     rf"(?:{_SONG}) (?:wapas|phir se|fir se) (?:chalao|chala do|play {_KARO})", "play_pause"),
+    (rf"(?:play )?(?:the )?next(?: {_SONG})?|skip(?: this| the| it)?(?: {_SONG})?|agla {_SONG}(?: chalao| lagao| bajao)?|"
+     rf"change(?: this| the)? {_SONG}|{_SONG} (?:badlo|change {_KARO}|badal do)|(?:koi )?(?:aur|dusra|doosra) {_SONG}(?: chalao| lagao| bajao)?",
+     "next"),
+    (rf"(?:play |go to )?(?:the )?(?:previous|prev)(?: {_SONG})?|(?:go back to |play |back to )?(?:the )?(?:last|previous) {_SONG}|"
+     rf"pichla(?: wala)? {_SONG}(?: chalao| lagao| bajao)?|play the {_SONG} before this", "previous"),
+    (rf"(?:increase|raise|turn up|boost|bump up)(?: the)?(?: system)? (?:volume|sound)|turn the (?:volume|sound) up|"
+     rf"(?:system )?volume (?:up|badhao|badha do|tez {_KARO}|increase {_KARO})|awaa?z (?:badhao|badha do|tez {_KARO}|badhado)|"
+     rf"(?:.* )?louder|(?:it's |its |it is )?too (?:quiet|soft)|i can't hear(?: anything| it)?", "volume_up"),
+    (rf"(?:decrease|lower|reduce|turn down)(?: the)?(?: system)? (?:volume|sound)|turn the (?:volume|sound) down|"
+     rf"(?:system )?volume (?:down|kam {_KARO}|ghatao)|awaa?z (?:kam {_KARO}|dheere {_KARO}|dheemi {_KARO})|"
+     rf"(?:make it )?(?:quieter|softer)|(?:it's |its |it is )?too loud", "volume_down"),
+    (rf"(?:un)?mute(?: the| it| everything)?(?: (?:system|volume|sound|audio|laptop|computer|speakers?))?|"
+     rf"silence(?: the| it| everything)?(?: (?:laptop|computer|sound|audio))?|(?:awaa?z|sound|volume) band {_KARO}", "mute"),
 ]
 _MEDIA = [(re.compile(rf"^(?:{p})$", re.I), a) for p, a in _MEDIA]
 
@@ -61,12 +72,42 @@ _OPEN = [
     re.compile(rf"^{_OPEN_VERB}(?: up)? (?:the )?(?P<app>.+?)(?: app| application| browser)?(?P<bg> in (?:the )?background)?$", re.I),
     re.compile(r"^get (?:the )?(?P<app>.+?)(?: app)? (?:running|started|open|up)$", re.I),
     re.compile(r"^(?P<app>.+?)(?: app| browser)?(?: ko)? (?:kholo|khol do|kholdo|khol de|open karo|open kro|open kar do|"
-               r"chalu karo|chalu kar do|start karo|start kro)$", re.I),
+               r"chalu karo|chalu kar do|chalu kar|start karo|start kro)$", re.I),
+    re.compile(r"^(?:mujhe |i need |i want )(?P<app>.+?) (?:chahiye|open|opened)$", re.I),
 ]
 _CLOSE = [
     re.compile(r"^(?:close|quit|exit|kill|shut|shut down|get rid of|terminate)(?: the)? (?P<app>.+?)(?: app| application| browser)?$", re.I),
-    re.compile(r"^(?P<app>.+?)(?: app| browser)?(?: ko)? (?:band karo|band kar do|band kardo|band karde|band kro|close karo|"
+    re.compile(r"^(?P<app>.+?)(?: app| browser)?(?: ko)? (?:band karo|band kar do|band kardo|band karde|band kar de|band kro|close karo|"
                r"close kro|close kar do|hata do|hatao)$", re.I),
+    re.compile(r"^(?:i'?m|i am) done with (?:the )?(?P<app>.+?)(?: close it)?$", re.I),
+    re.compile(r"^(?P<app>.+?) ki (?:zarurat|zaroorat|jarurat) nahi(?: hai)?(?: band (?:karo|kar do))?$", re.I),
+]
+
+# Wi-Fi/Bluetooth on-off. Checked before the close-app rules: "wifi band karo"
+# means turn it off, not "close an app called wifi".
+_RADIO = re.compile(
+    r"^(?:turn|switch) (?P<st>on|off) (?:the )?(?P<k>wi-?fi|bluetooth)$|"
+    r"^(?:turn|switch) (?:the )?(?P<k2>wi-?fi|bluetooth) (?P<st2>on|off)$|"
+    r"^(?P<v>enable|disable) (?:the )?(?P<k3>wi-?fi|bluetooth)$|"
+    r"^(?P<k4>wi-?fi|bluetooth) (?P<st4>on|off|band|chalu|start|bandh) (?:karo|kar do|kardo|kar de|karde|kro)$", re.I)
+
+# Things Vaayu must refuse outright rather than let the model guess at (the
+# benchmark caught "shut down the laptop" -> close_app('Windows Terminal')).
+# Payment apps/money transfer are a permanent block by explicit request.
+_PC = r"(?:the |my |this )?(?:laptop|computer|pc|system|windows|machine)"
+_REFUSE = [
+    (re.compile(rf"\b(?:shut ?down|restart|reboot|hibernate|power off|sleep|log ?out of|log ?off|sign out of) {_PC}\b|"
+                rf"\bput {_PC} to sleep\b|\b{_PC} (?:band|shutdown|restart) (?:karo|kar do)\b", re.I),
+     "I don't shut down, restart or sleep the laptop - you can do that yourself, or say 'Vaayu die' to stop me."),
+    (re.compile(r"\b(?:delete|erase|wipe|format|remove)\b.*\b(?:file|files|folder|folders|everything|drive|downloads|documents|desktop|all)\b",
+                re.I),
+     "I don't delete or format files - that's something you should do yourself."),
+    (re.compile(r"^(?:install|uninstall|download and install)\b", re.I),
+     "I can't install or uninstall software yet."),
+    (re.compile(r"\b(?:paytm|phonepe|phone pe|gpay|google pay|upi|bhim|send money|transfer money|transfer \d+|"
+                r"pay \d+|pay (?:rs|rupees|money)|make (?:a )?payment|net ?banking|bank account|credit card|debit card)\b"
+                r"|\bpay (?:my |the )?\w* ?bill\b", re.I),
+     "I don't do payments or open payment apps - that's blocked permanently."),
 ]
 
 _INFO = [
@@ -79,11 +120,12 @@ _INFO = [
     (re.compile(r"\b(displays?|monitors?)\b", re.I), "list_connected_devices", {"category": "display"}),
     (re.compile(r"\b(mic|microphone|speaker volume|speakers?)\b", re.I), "get_audio_status", {}),
 ]
-_QUESTION = re.compile(r"\b(is|are|am|what|what's|how|how's|which|kitni|kitna|kya|check|batao|status|level|hai)\b", re.I)
+_QUESTION = re.compile(r"\b(is|are|am|what|what's|how|how's|which|kitni|kitna|kya|check|batao|status|level|hai|tell)\b", re.I)
 
-_SCREENSHOT = re.compile(r"^(?:take|capture|grab|le lo|lo)?\s*(?:a )?(?:screen ?shot|screen capture)(?: (?:lo|le lo|lelo|karo))?$|"
-                         r"^capture (?:the |my )?screen$", re.I)
-_LOCK = re.compile(r"^lock(?: (?:my|the))? (?:computer|laptop|pc|screen|system)$|^(?:laptop|computer|pc|screen) lock (?:karo|kar do)$", re.I)
+_SCREENSHOT = re.compile(r"^(?:take|capture|grab|le lo|lo)?\s*(?:a )?(?:quick )?(?:screen ?shot|screen capture|ss)(?: (?:lo|le lo|lelo|karo))?$|"
+                         r"^capture (?:the |my )?screen$|^screen ki (?:photo|picture|pic) (?:lo|le lo|khicho)$", re.I)
+_LOCK = re.compile(r"^lock(?: (?:my|the))? (?:computer|laptop|pc|screen|system)$|^(?:laptop|computer|pc|screen) lock (?:karo|kar do)$|"
+                   r"^lock (?:karo|kar do|it|it up)$", re.I)
 _MINIMIZE = re.compile(r"^minimi[sz]e(?: (?:this|it|this window|the window|current window))?$|^(?:ye|isko|this) minimi[sz]e (?:karo|kar do)$", re.I)
 _TIME = re.compile(r"^(?:what(?:'s| is) the time|what time is it|time kya hai|kitne baje hai[n]?|time batao|kya time hai|"
                    r"tell me the time)(?: now)?$", re.I)
@@ -99,7 +141,8 @@ _FULL_OFF = re.compile(r"^(?:exit|leave|close|get out of) full ?screen(?: mode)?
 _NUM_WORDS = {"a": 1, "one": 1, "two": 2, "five": 5, "ten": 10, "fifteen": 15, "twenty": 20, "thirty": 30}
 _SEEK = re.compile(r"^(?:(?P<fw>skip ahead|skip forward|fast forward|forward|jump ahead)|(?P<bw>go back|rewind|jump back|skip back))"
                    r"(?: by)? (?P<n>\d+|a|one|two|five|ten|fifteen|twenty|thirty) ?(?P<unit>seconds?|secs?|minutes?|mins?)$|"
-                   r"^(?:video )?(?P<n2>\d+) (?P<unit2>second|seconds|sec|minute|minutes|min) (?P<dir2>aage|peeche|piche) (?:karo|kar do)$",
+                   r"^(?:video )?(?P<n2>\d+) (?P<unit2>second|seconds|sec|minute|minutes|min) (?P<dir2>aage|peeche|piche) (?:karo|kar do)$|"
+                   r"^video (?P<dir3>aage|peeche|piche) (?:badhao|karo|kar do) (?P<n3>\d+) (?P<unit3>second|seconds|sec|minute|minutes|min)$",
                    re.I)
 _VIDEO_VOL = re.compile(rf"^(?P<verb>turn up|increase|raise|turn down|decrease|lower|reduce)(?: the)? (?:(?P<site>{_SITE}) )?"
                         rf"(?:video )?volume$|^(?P<mute>mute|unmute)(?: the)? (?:(?P<site2>{_SITE}) )?video$|"
@@ -109,7 +152,10 @@ _ORDINALS = {"first": 1, "1st": 1, "second": 2, "2nd": 2, "third": 3, "3rd": 3, 
              "5th": 5, "last": -1}
 _TAB_CLOSE = re.compile(r"^close (?:the )?(?P<q>.+?) tab$|^(?:ye|is) tab (?:ko )?band karo$", re.I)
 _TAB_SWITCH = re.compile(r"^(?:go|switch|move) (?:back )?to (?:the )?(?P<q>.+?) tab$|^(?P<q2>.+?) (?:wale |wala )?tab (?:pe|par) jao$", re.I)
-_LIST_TABS = re.compile(r"^(?:what|which) tabs (?:are|do i have) open$|^(?:list|show)(?: me)?(?: all)?(?: my)?(?: browser)? tabs$", re.I)
+_LIST_TABS = re.compile(r"^(?:what|which) tabs (?:are|do i have) open$|^(?:list|show)(?: me)?(?: all)?(?: my)?(?: open)?(?: browser)? tabs$", re.I)
+_YOUTUBE = re.compile(r"^(?:search|find|look up) (?:on )?youtube (?:for )?(?P<q>.+)$|^(?:play|search|put on) (?P<q2>.+?) on youtube$|"
+                      r"^youtube (?:pe|par|pr) (?P<q3>.+?) (?:chalao|lagao|bajao|search karo|dikhao)$", re.I)
+_CHANNEL_HINT = re.compile(r"\b(?:latest|newest|new|naya|recent) video\b|\bchannel\b", re.I)
 _WEBSITE = re.compile(r"^(?:open|go to|visit|launch)(?: the)? (?P<url>[a-z0-9-]+\.(?:com|in|org|net|io|co|ai|dev)(?:/\S*)?)$|"
                       r"^open (?:the )?(?P<site>[a-z0-9 ]+?) (?:website|site)$", re.I)
 _WEB_SEARCH = re.compile(r"^(?:search(?: the web| online| google)?(?: for)?|google|look up) (?P<q>.+)$", re.I)
@@ -117,21 +163,39 @@ _LOCAL_HINT = re.compile(r"\b(file|files|folder|documents|desktop|downloads|my c
 
 _TYPE = re.compile(r"^(?:type|write)(?: out)? (?P<text>.+?)(?: in (?:notepad|word|here|the document))?$|^likho (?P<t2>.+)$|^(?P<t3>.+) likho$", re.I)
 _NOTE = re.compile(r"^(?:note that|note down|make a note(?: that)?|add a note(?: that| saying)?|save a note(?: that| saying)?|"
-                   r"remember (?:that|to)) (?P<text>.+)$|^yaad rakhna (?P<t2>.+)$", re.I)
+                   r"remember (?:that|to)) (?P<text>.+)$|^yaad rakhna (?P<t2>.+)$|^note (?P<t3>.+)$", re.I)
 _LIST_NOTES = re.compile(r"^(?:show|read|list)(?: me)?(?: all)? my(?: last \d+)? notes$|^what are my notes$|^mere notes (?:dikhao|batao)$", re.I)
 
-# WhatsApp: "send M to W on whatsapp", "W ko whatsapp pe M bhejo", "whatsapp W saying M", "tell W on whatsapp that M"
+# WhatsApp - the ONLY way a recipient gets chosen: parsed verbatim from the
+# user's own words, never picked by the model (see _LLM_BLOCKED_TOOLS).
+# Message is matched greedily so "send going to office to X on whatsapp"
+# keeps "going to office" as the message and X as the chat.
+_WA_MSG_PREFIX = r"(?:(?:a )?(?:whatsapp )?(?:message|msg|text) (?:saying |that )?)?"
 _WA = [
-    re.compile(r"^(?:send|whatsapp) (?P<m>.+?) to (?P<w>.+?) (?:on|via|over|through) whatsapp$", re.I),
+    re.compile(rf"^(?:send|whatsapp) {_WA_MSG_PREFIX}(?P<m>.+) to (?P<w>.+?) (?:on|in|via|over|through|par|pe) whatsapp$", re.I),
+    re.compile(rf"^(?:on|in) whatsapp send {_WA_MSG_PREFIX}(?P<m>.+) to (?P<w>.+)$", re.I),
+    re.compile(rf"^send {_WA_MSG_PREFIX}(?P<m>.+) on whatsapp to (?P<w>.+)$", re.I),
     re.compile(r"^(?P<w>.+?) ko whatsapp (?:pe|par|pr) (?P<m>.+?) (?:bhejo|bhej do|send karo|send kro)$", re.I),
+    re.compile(r"^whatsapp (?:pe|par|pr) (?P<w>.+?) ko (?P<m>.+?) (?:bhejo|bhej do|send karo|send kro)$", re.I),
+    re.compile(r"^(?P<w>.+?) ko whatsapp (?:karo|kar do) (?:ki|ke) (?P<m>.+)$", re.I),
+    re.compile(r"^whatsapp (?:message )?to (?P<w>.+?) ?: (?P<m>.+)$", re.I),
     re.compile(r"^whatsapp (?P<w>.+?) (?:saying|that) (?P<m>.+)$", re.I),
     re.compile(r"^(?:tell|message|text) (?P<w>.+?) on whatsapp (?:that|saying) (?P<m>.+)$", re.I),
 ]
+_MULTI_RECIPIENT = re.compile(r"\s(?:and|aur|&)\s|,", re.I)
+WHATSAPP_HOWTO = ("I only send WhatsApp messages when you say the chat and the message clearly, like: "
+                  "send hello to SAVED MESSAGES on WhatsApp.")
+# Tools the model may never call on its own - their arguments must come
+# from the user's exact words via fast_route, or the request is refused.
+_LLM_BLOCKED_TOOLS = {"send_whatsapp_message": WHATSAPP_HOWTO}
 
 _SMALL_TALK = [
     (re.compile(r"^(?:thanks|thank you|thank you so much|thanks a lot|shukriya|dhanyavaad|thnx)$", re.I), "You're welcome!"),
-    (re.compile(r"^(?:ok|okay|okk|cool|fine|alright|got it|theek hai|achha|accha)$", re.I), "Okay."),
-    (re.compile(r"^(?:never ?mind|nothing|forget it|nothing forget it|kuch nahi|rehne do|cancel)$", re.I), "Okay, no problem."),
+    (re.compile(r"^(?:ok|okay|okk|cool|fine|alright|got it|(?:acha |achha |accha |chalo |ok )?theek hai|achha|accha|acha|bas|"
+                r"bas karo|that's all|that's it)$", re.I), "Okay."),
+    (re.compile(r"^(?:never ?mind|nothing|forget it|nothing forget it|kuch nahi|rehne do|cancel|sorry|my bad)$", re.I), "Okay, no problem."),
+    (re.compile(r"^(?:good job|well done|nice|great|awesome|you're awesome|shabash|bahut badhiya)$", re.I), "Thank you!"),
+    (re.compile(r"^(?:good night|good morning|good evening|good afternoon|bye|see you|goodbye)$", re.I), "Same to you!"),
     (re.compile(r"^(?:how are you|how are you doing|kya haal hai|kaise ho|kaisa hai|what's up|sup)$", re.I),
      "I'm doing great! What can I do for you?"),
     (re.compile(r"^(?:are you there|you there|hello|hi|hey|namaste)$", re.I), "Yes, I'm here. What can I do for you?"),
@@ -174,7 +238,16 @@ def _route_one(t: str):
     for pattern in _WA:
         m = pattern.match(t)
         if m and m.group("w").strip() and m.group("m").strip():
-            return ("tool", "send_whatsapp_message", {"contact_name": m.group("w").strip(), "message": m.group("m").strip()})
+            who = m.group("w").strip()
+            if _MULTI_RECIPIENT.search(f" {who} "):
+                return ("reply", "I can only send to one WhatsApp chat at a time - tell me one chat first.")
+            return ("tool", "send_whatsapp_message", {"contact_name": who, "message": m.group("m").strip()})
+    t = re.sub(r"\s?:(?=\s)", "", t)  # the ": " separator only matters to the WhatsApp shapes above
+    if m := _RADIO.match(t):
+        kind = (m.group("k") or m.group("k2") or m.group("k3") or m.group("k4")).lower().replace("-", "")
+        raw = (m.group("st") or m.group("st2") or m.group("v") or m.group("st4")).lower()
+        state = "on" if raw in ("on", "enable", "chalu", "start") else "off"
+        return ("tool", "set_radio", {"kind": kind, "state": state})
     for pattern, action in _MEDIA:
         if pattern.match(t):
             return ("tool", "control_media", {"action": action})
@@ -192,6 +265,8 @@ def _route_one(t: str):
     if m := _SEEK.match(t):
         if m.group("n2"):
             n, unit, fw = int(m.group("n2")), m.group("unit2"), m.group("dir2").lower() == "aage"
+        elif m.group("n3"):
+            n, unit, fw = int(m.group("n3")), m.group("unit3"), m.group("dir3").lower() == "aage"
         else:
             raw = m.group("n").lower()
             n, unit, fw = (int(raw) if raw.isdigit() else _NUM_WORDS[raw]), m.group("unit"), bool(m.group("fw"))
@@ -225,7 +300,9 @@ def _route_one(t: str):
     if _LIST_NOTES.match(t):
         return ("tool", "list_notes", {})
     if m := _NOTE.match(t):
-        return ("tool", "add_note", {"text": m.group("text") or m.group("t2")})
+        return ("tool", "add_note", {"text": m.group("text") or m.group("t2") or m.group("t3")})
+    if (m := _YOUTUBE.match(t)) and not _CHANNEL_HINT.search(t):
+        return ("tool", "play_video_on_youtube", {"query": m.group("q") or m.group("q2") or m.group("q3")})
     if m := _WEBSITE.match(t):
         return ("tool", "open_website", {"url_or_query": m.group("url") or m.group("site")})
     if (m := _WEB_SEARCH.match(t)) and not _LOCAL_HINT.search(t):
@@ -255,19 +332,70 @@ def fast_route(text: str):
     command, or None to fall back to the LLM. Deliberately conservative:
     a miss only costs LLM latency, a wrong hit does the wrong thing."""
     t = normalize(text)
+    for pattern, reply in _REFUSE:  # whole utterance, before splitting: "open phonepe and send money"
+        if pattern.search(t):
+            return ("reply", reply)
     # Split first: a greedy single rule ("<anything> likho") would otherwise
     # swallow "notepad kholo aur hello likho" whole. A message that merely
     # contains "and" doesn't split cleanly into routable parts, so it falls
     # through to the single-command rules intact.
     parts = _SPLIT.split(t)
     if len(parts) > 1:
-        routed = [_route_one(p) for p in parts]
+        routed = _route_parts(parts)
         if all(r and r[0] == "tool" for r in routed):
             return ("tools", [r[1:] for r in routed])
     one = _route_one(t)
     if one:
         return one if one[0] == "reply" else ("tools", [one[1:]])
     return None
+
+
+# After "open whatsapp", a later "send hi to X" / "X ko hi bhejo" means WhatsApp.
+_WA_IN_CONTEXT = [
+    re.compile(rf"^send {_WA_MSG_PREFIX}(?P<m>.+) to (?P<w>.+)$", re.I),
+    re.compile(r"^(?P<w>.+?) ko (?P<m>.+?) (?:bhejo|bhej do|send karo)$", re.I),
+]
+_ACTION_START = re.compile(
+    r"^(?:open|close|play|send|type|write|search|take|lock|mute|pause|show|set|turn|go|switch|minimi[sz]e|note|find|read|"
+    r"check|tell|start|launch|put|skip|make|save|add|move|change|google)\b|"
+    r"\b(?:karo|kro|kar do|kholo|chalao|lagao|bhejo|likho|dikhao|batao|band karo)$", re.I)
+
+
+def _route_parts(parts: list[str]) -> list:
+    routed, whatsapp_open = [], False
+    for p in parts:
+        r = _route_one(p)
+        if r is None and whatsapp_open:
+            for pattern in _WA_IN_CONTEXT:
+                if (m := pattern.match(p)) and not _MULTI_RECIPIENT.search(f" {m.group('w')} "):
+                    r = ("tool", "send_whatsapp_message", {"contact_name": m.group("w").strip(), "message": m.group("m").strip()})
+                    break
+        if r and r[0] == "tool" and r[1] == "open_app" and r[2]["app_name"].lower() == "whatsapp":
+            whatsapp_open = True
+        routed.append(r)
+    return routed
+
+
+def split_steps(text: str) -> list[str] | None:
+    """For a multi-step command the fast path can't fully handle ("open
+    spotify and play some music"): the steps to run one by one - routed
+    ones directly, the rest through the LLM - or None if it doesn't
+    cleanly split into separate commands (a WhatsApp message containing
+    "and" must stay whole)."""
+    parts = _SPLIT.split(normalize(text))
+    if len(parts) < 2:
+        return None
+    routed = _route_parts(parts)
+    if not any(r and r[0] == "tool" for r in routed):
+        return None
+    if not all(r or _ACTION_START.search(p) for p, r in zip(parts, routed)):
+        return None
+    return parts
+
+
+def blocked_reply(tool_name: str) -> str | None:
+    """Reply to give instead of letting the model call this tool itself."""
+    return _LLM_BLOCKED_TOOLS.get(tool_name)
 
 
 # Hinglish/colloquial words -> the English words tool names/descriptions use.
@@ -281,8 +409,8 @@ _SYNONYMS = {
     "skip": "seek video", "forward": "seek video", "rewind": "seek video", "aage": "seek video", "peeche": "seek video",
     "fullscreen": "fullscreen video", "tab": "browser tab", "tabs": "browser tab", "chrome": "app browser",
     "brave": "app browser", "battery": "system status", "charge": "system status", "plugged": "system status",
-    "wifi": "network status", "internet": "network status", "online": "network status",
-    "bluetooth": "devices connected", "mic": "audio status", "speaker": "audio status",
+    "wifi": "network status radio", "internet": "network status", "online": "network status",
+    "bluetooth": "devices connected radio", "off": "radio", "disable": "radio", "enable": "radio", "mic": "audio status", "speaker": "audio status",
     "remember": "note", "yaad": "note", "file": "files search read", "dhundo": "search", "find": "search",
     "orb": "status orb", "ball": "status orb move position", "corner": "status orb move position",
     "update": "daily time", "check": "daily time", "password": "sensitive field",
@@ -330,7 +458,7 @@ DIRECT_REPLY_TOOLS = {
     "restore_window", "switch_to_window", "play_video_on_youtube", "play_latest_video_from_channel",
     "add_note", "set_video_volume", "set_video_fullscreen", "seek_video", "control_video_playback",
     "close_browser_tab", "switch_to_browser_tab", "type_text", "send_whatsapp_message",
-    "move_status_orb", "set_daily_update_time", "open_website", "get_system_status",
+    "move_status_orb", "set_daily_update_time", "open_website", "get_system_status", "set_radio",
 }
 
 

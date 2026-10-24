@@ -101,17 +101,39 @@ def test_get_network_status_no_wifi_adapter_reports_unavailable():
     assert result["wifi"] == {"available": False}
 
 
-def test_get_network_status_bluetooth_enabled_when_any_device_ok():
+def test_get_network_status_bluetooth_enabled_follows_the_radio_state():
     bt_output = json.dumps([{"FriendlyName": "Earbuds", "Status": "OK"}])
-    with patch.object(network_status, "_run") as mock_run:
+    with patch.object(network_status, "_run") as mock_run, patch.object(network_status, "_radio_ps", return_value="On"):
         mock_run.side_effect = [_WIFI_CONNECTED_OUTPUT, bt_output]
         result = network_status.get_network_status()
     assert result["bluetooth"]["enabled"] is True
     assert result["bluetooth"]["devices"] == [{"name": "Earbuds", "status": "OK"}]
 
 
-def test_get_network_status_bluetooth_disabled_when_no_devices():
-    with patch.object(network_status, "_run") as mock_run:
-        mock_run.side_effect = [_WIFI_CONNECTED_OUTPUT, "[]"]
+def test_bluetooth_reads_off_when_radio_is_off_even_though_adapter_is_ok():
+    # Found live: PnP Status stays "OK" with the radio switched off.
+    bt_output = json.dumps([{"FriendlyName": "Intel Wireless Bluetooth", "Status": "OK"}])
+    with patch.object(network_status, "_run") as mock_run, patch.object(network_status, "_radio_ps", return_value="Off"):
+        mock_run.side_effect = [_WIFI_CONNECTED_OUTPUT, bt_output]
         result = network_status.get_network_status()
-    assert result["bluetooth"] == {"enabled": False, "devices": []}
+    assert result["bluetooth"]["enabled"] is False
+
+
+def test_set_radio_bluetooth_off():
+    with patch.object(network_status, "_radio_ps", return_value="Allowed") as ps:
+        assert network_status.set_radio("bluetooth", "off") == "Bluetooth turned off."
+    ps.assert_called_once_with("bluetooth", "Off")
+
+
+def test_set_radio_raises_when_windows_refuses():
+    with patch.object(network_status, "_radio_ps", return_value="DeniedByUser"):
+        with pytest.raises(RuntimeError, match="refused"):
+            network_status.set_radio("wifi", "off")
+
+
+def test_set_radio_wifi_on_reconnects_to_previous_network_when_windows_does_not():
+    network_status._last_wifi_ssid = "HomeNet"
+    with patch.object(network_status, "_radio_ps", return_value="Allowed"),             patch.object(network_status, "_wifi_connected", return_value=False),             patch.object(network_status, "_get_wifi_status", return_value={"connected": True, "ssid": "HomeNet"}),             patch.object(network_status, "_run") as run, patch.object(network_status.time, "sleep"):
+        reply = network_status.set_radio("wifi", "on")
+    run.assert_called_once_with(["netsh", "wlan", "connect", "name=HomeNet"])
+    assert reply == "Wi-Fi is on and connected to HomeNet."

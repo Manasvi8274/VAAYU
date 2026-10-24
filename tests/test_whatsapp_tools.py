@@ -89,7 +89,7 @@ def test_send_whatsapp_message_raises_when_contact_not_found():
     with patch.object(whatsapp, "_target_tab", return_value=_tab()), patch.object(
         whatsapp, "_send_cdp_command", side_effect=_sequence(True, False)
     ), patch("time.sleep"):
-        with pytest.raises(ValueError, match="No WhatsApp contact"):
+        with pytest.raises(ValueError, match="is not in your WhatsApp chats - nothing was sent"):
             whatsapp.send_whatsapp_message("Nonexistent Person", "hi")
 
 

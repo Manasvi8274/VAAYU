@@ -78,6 +78,12 @@ _NUM_CTX = 8192
 # /no_think prompt switch, so this must go through Ollama's own `think` field.
 _THINK = False
 
+# A benchmark run hung for 8+ minutes on one ordinary command (not
+# reproducible on retry - sampling randomness or an Ollama stall). No call
+# may block Vaayu forever: cap reply length, and time out the HTTP call.
+_MAX_REPLY_TOKENS = 300
+_CALL_TIMEOUT_SECONDS = 60
+
 # Weak local models occasionally answer an action request in plain text
 # ("Brave is now closed") without ever actually calling the tool that would
 # make it true - confirmed in real use (e.g. "close brave" reported as done
@@ -136,7 +142,7 @@ def _sanitize_reply(text: str) -> str:
 
 class OllamaBrain:
     def __init__(self, host: str, model: str, fast_paths: bool = True):
-        self.client = ollama.Client(host=host)
+        self.client = ollama.Client(host=host, timeout=_CALL_TIMEOUT_SECONDS)
         self.model = model
         # router.py's fast route / tool subset / direct replies. False keeps
         # the plain every-tool LLM loop (the old behavior, used as the
@@ -155,7 +161,7 @@ class OllamaBrain:
             ],
             keep_alive=_KEEP_ALIVE,
             think=_THINK,
-            options={"num_ctx": 2048},
+            options={"num_ctx": 2048, "num_predict": _MAX_REPLY_TOKENS},
         )
         return _sanitize_reply(response["message"].get("content", ""))
 
@@ -218,6 +224,20 @@ class OllamaBrain:
                     )
                 reply = " ".join(replies)
                 return reply, messages + [{"role": "assistant", "content": reply}]
+            steps = router.split_steps(last_user_text)
+            if steps:
+                # "open spotify and play some music": each step as its own
+                # command, in order - a step that fails stops the rest.
+                # (Steps can't split again: split_steps needs a connector.)
+                base = messages[:-1] if messages and messages[-1].get("role") == "user" else messages
+                replies = []
+                for step in steps:
+                    step_reply, _ = self.respond(base + [{"role": "user", "content": step}], tool_registry, confirm)
+                    replies.append(step_reply)
+                    if step_reply.startswith("That didn't work"):
+                        break
+                reply = " ".join(replies)
+                return reply, messages + [{"role": "assistant", "content": reply}]
             tool_registry = router.select_tools(last_user_text, tool_registry)
 
         for _step in range(_MAX_TOOL_STEPS):
@@ -227,7 +247,7 @@ class OllamaBrain:
                 tools=tool_registry.get_ollama_tools(),
                 keep_alive=_KEEP_ALIVE,
                 think=_THINK,
-                options={"num_ctx": _NUM_CTX},
+                options={"num_ctx": _NUM_CTX, "num_predict": _MAX_REPLY_TOKENS},
             )
             assistant_msg = response["message"]
             messages = messages + [assistant_msg]
@@ -264,6 +284,11 @@ class OllamaBrain:
             call = tool_calls[0]  # one tool call per LLM step, but steps can chain (see loop)
             name = call["function"]["name"]
             arguments = call["function"].get("arguments") or {}
+
+            if self.fast_paths and (blocked := router.blocked_reply(name)):
+                # e.g. WhatsApp: the model swapped "SAVED MESSAGES" for "mom"
+                # in the benchmark - recipients only ever come from fast_route.
+                return blocked, messages + [{"role": "assistant", "content": blocked}]
 
             if last_action_failed and (name, arguments) == last_failed_call:
                 identical_retries += 1
@@ -304,7 +329,7 @@ class OllamaBrain:
             messages=messages,
             keep_alive=_KEEP_ALIVE,
             think=_THINK,
-            options={"num_ctx": _NUM_CTX},
+            options={"num_ctx": _NUM_CTX, "num_predict": _MAX_REPLY_TOKENS},
         )
         final_msg = final_response["message"]
         messages = messages + [final_msg]

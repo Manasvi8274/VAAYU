@@ -229,7 +229,11 @@ class Orchestrator:
             # command in this same turn, falling through below.
 
         self.messages.append({"role": "user", "content": text})
-        reply, self.messages = self.brain.respond(self.messages, registry, confirm=self._voice_confirm)
+        try:
+            reply, self.messages = self.brain.respond(self.messages, registry, confirm=self._voice_confirm)
+        except Exception as exc:  # e.g. a model call timing out - must not end the listening loop
+            issue_log.log_issue(user_said=text, tool_name=None, error=f"brain.respond failed: {exc!r}", kind="respond_crash")
+            reply = "Sorry, that took too long or went wrong - please try again."
         print(f"Assistant: {reply}")
         self._speak(reply)
 

@@ -33,7 +33,7 @@ def test_fast_route_hits(text, expected):
 @pytest.mark.parametrize(
     "text",
     [
-        "play perfect by ed sheeran on youtube",  # needs a real search tool
+        "play something nice",  # no target to search for
         "open my notes file in documents",  # a file
         "close vaayu",  # the assistant itself, not an app
         "send it",  # no recipient/message to parse
@@ -85,12 +85,81 @@ def test_successful_action_tool_skips_the_second_llm_call():
         brain = OllamaBrain(host="http://fake", model="m")
     brain.client = MagicMock()
     brain.client.chat.return_value = {"message": {"role": "assistant", "content": "", "tool_calls": [
-        {"function": {"name": "send_whatsapp_message", "arguments": {"contact_name": "x", "message": "y"}}}]}}
-    with patch.object(type(registry), "dispatch", return_value={"ok": True, "result": "Sent 'y' to x."}):
-        reply, _ = brain.respond([{"role": "user", "content": "let x know y via whatsapp"}], registry,
-                                 confirm=lambda n, a: True)
-    assert reply == "Sent 'y' to x."
+        {"function": {"name": "play_video_on_youtube", "arguments": {"query": "lofi"}}}]}}
+    with patch.object(type(registry), "dispatch", return_value={"ok": True, "result": "Playing lofi on YouTube."}):
+        reply, _ = brain.respond([{"role": "user", "content": "put on some lofi"}], registry)
+    assert reply == "Playing lofi on YouTube."
     assert brain.client.chat.call_count == 1
+
+
+def test_model_is_never_allowed_to_pick_a_whatsapp_recipient():
+    # Benchmark: the model sent a "SAVED MESSAGES" request to "mom".
+    with patch("assistant.llm.ollama_client.ollama.Client"):
+        brain = OllamaBrain(host="http://fake", model="m")
+    brain.client = MagicMock()
+    brain.client.chat.return_value = {"message": {"role": "assistant", "content": "", "tool_calls": [
+        {"function": {"name": "send_whatsapp_message", "arguments": {"contact_name": "mom", "message": "buy milk"}}}]}}
+    with patch.object(type(registry), "dispatch") as dispatch:
+        reply, _ = brain.respond([{"role": "user", "content": "message SAVED MESSAGES buy milk on whatsapp"}],
+                                 registry, confirm=lambda n, a: True)
+    dispatch.assert_not_called()
+    assert reply == router.WHATSAPP_HOWTO
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ('send message "By Bye" to saved messages in whatsapp', ("saved messages", "By Bye")),
+        ("send going to office to SAVED MESSAGES on whatsapp", ("SAVED MESSAGES", "going to office")),
+        ("whatsapp pe SAVED MESSAGES ko dinner ready bhejo", ("SAVED MESSAGES", "dinner ready")),
+        ("whatsapp message to SAVED MESSAGES: lunch at 2", ("SAVED MESSAGES", "lunch at 2")),
+        ("send ok to Raman Garg on whatsapp", ("Raman Garg", "ok")),
+    ],
+)
+def test_whatsapp_recipient_and_message_are_taken_verbatim(text, expected):
+    _kind, [(name, args)] = router.fast_route(text)
+    assert name == "send_whatsapp_message"
+    assert (args["contact_name"], args["message"]) == expected
+
+
+def test_two_whatsapp_recipients_are_refused_not_guessed():
+    kind, reply = router.fast_route("send thanks to SAVED MESSAGES and Raman Garg on whatsapp")
+    assert kind == "reply" and "one WhatsApp chat" in reply
+
+
+def test_whatsapp_context_carries_into_the_next_step():
+    assert router.fast_route("whatsapp kholo aur SAVED MESSAGES ko hello bhejo") == ("tools", [
+        ("open_app", {"app_name": "whatsapp"}),
+        ("send_whatsapp_message", {"contact_name": "SAVED MESSAGES", "message": "hello"})])
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("turn off wifi", {"kind": "wifi", "state": "off"}), ("wifi band karo", {"kind": "wifi", "state": "off"}),
+        ("bluetooth chalu karo", {"kind": "bluetooth", "state": "on"}), ("enable bluetooth", {"kind": "bluetooth", "state": "on"}),
+    ],
+)
+def test_radio_on_off(text, expected):
+    assert router.fast_route(text) == ("tools", [("set_radio", expected)])
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["shut down the laptop", "restart my computer", "put the laptop to sleep", "delete everything in downloads",
+     "format the d drive", "install vlc", "open phonepe and send money", "pay 200 on paytm"],
+)
+def test_dangerous_requests_are_refused_without_any_tool(text):
+    assert router.fast_route(text)[0] == "reply"
+
+
+def test_reminder_mentioning_pay_is_still_a_note():
+    assert router.fast_route("remember to pay rent on the 5th") == ("tools", [("add_note", {"text": "pay rent on the 5th"})])
+
+
+def test_mixed_multi_step_is_split_into_separate_commands():
+    assert router.split_steps("open spotify and play some music") == ["open spotify", "play some music"]
+    assert router.split_steps("send bread and milk to mom") is None  # one message, not two commands
 
 
 @pytest.mark.parametrize(

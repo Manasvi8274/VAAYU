@@ -314,10 +314,85 @@ def build_holdout():
         ("okay vaayu pause", "control_media", {"action": "play_pause"}),
         ("thanks vaayu", None, {}), ("good night", None, {}), ("what's your favourite colour", None, {}),
         ("how old are you", None, {}), ("acha theek hai", None, {}), ("who is virat kohli", None, {}),
-        ("book an uber", None, {}), ("send money to papa on phonepe", None, {}), ("turn off wifi", None, {}),
+        ("book an uber", None, {}), ("send money to papa on phonepe", None, {}),
+        # label changed after set_radio was added on request (was None when no wifi tool existed)
+        ("turn off wifi", "set_radio", {"kind": "wifi", "state": "off"}),
         ("shut down the laptop", None, {}), ("delete the downloads folder", None, {}), ("change my wallpaper", None, {}),
     ]:
         H.append(case("holdout", t, tool, **args))
+    return H
+
+
+def build_holdout2():
+    """Written BEFORE the round-3 fixes (common phrasing, wifi/bluetooth,
+    verbatim WhatsApp, refusals, mixed multi-step) and never used to tune them."""
+    H = []
+    for t, tool, args in [
+        # everyday media/volume wording
+        ("change this song", "control_media", {"action": "next"}), ("koi aur gaana lagao", "control_media", {"action": "next"}),
+        ("gaana badlo", "control_media", {"action": "next"}), ("song change karo", "control_media", {"action": "next"}),
+        ("skip it", "control_media", {"action": "next"}), ("play the song before this", "control_media", {"action": "previous"}),
+        ("pichla wala gaana chalao", "control_media", {"action": "previous"}), ("back to previous song", "control_media", {"action": "previous"}),
+        ("gaana band karo", "control_media", {"action": "play_pause"}), ("music pause karo", "control_media", {"action": "play_pause"}),
+        ("stop the music", "control_media", {"action": "play_pause"}), ("hold on pause it", "control_media", {"action": "play_pause"}),
+        ("music wapas chalao", "control_media", {"action": "play_pause"}), ("continue playing", "control_media", {"action": "play_pause"}),
+        ("thoda volume badhao", "control_media", {"action": "volume_up"}), ("volume thoda kam kar do", "control_media", {"action": "volume_down"}),
+        ("it's too loud", "control_media", {"action": "volume_down"}), ("I can't hear anything, louder", "control_media", {"action": "volume_up"}),
+        ("bump up the volume", "control_media", {"action": "volume_up"}), ("lower the sound a little", "control_media", {"action": "volume_down"}),
+        ("awaz band kar do", "control_media", {"action": "mute"}), ("silence everything", "control_media", {"action": "mute"}),
+        ("mute it", "control_media", {"action": "mute"}), ("unmute the laptop", "control_media", {"action": "mute"}),
+        # common app wording
+        ("I'm done with chrome", "close_app", {"app_name": "chrome"}), ("chrome ki zarurat nahi, band karo", "close_app", {"app_name": "chrome"}),
+        ("close it, the spotify one", "close_app", {"app_name": "spotify"}), ("open up notepad for me", "open_app", {"app_name": "notepad"}),
+        ("mujhe calculator chahiye", "open_app", {"app_name": "calculator"}), ("notepad chalu kar", "open_app", {"app_name": "notepad"}),
+        ("let's open vs code", "open_app", {"app_name": "vs"}), ("whatsapp band kar de", "close_app", {"app_name": "whatsapp"}),
+        ("discord hatao", "close_app", {"app_name": "discord"}), ("open brave quickly", "open_app", {"app_name": "brave"}),
+        # wifi / bluetooth on/off
+        ("turn off wifi", "set_radio", {"kind": "wifi", "state": "off"}), ("turn on the wifi", "set_radio", {"kind": "wifi", "state": "on"}),
+        ("wifi band karo", "set_radio", {"kind": "wifi", "state": "off"}), ("wifi on kar do", "set_radio", {"kind": "wifi", "state": "on"}),
+        ("disable bluetooth", "set_radio", {"kind": "bluetooth", "state": "off"}), ("enable bluetooth", "set_radio", {"kind": "bluetooth", "state": "on"}),
+        ("bluetooth chalu karo", "set_radio", {"kind": "bluetooth", "state": "on"}), ("switch off bluetooth", "set_radio", {"kind": "bluetooth", "state": "off"}),
+        ("is wifi on", "get_network_status", {}), ("bluetooth on hai kya", "list_connected_devices", {}),
+        # WhatsApp: verbatim contact/message, many shapes
+        ('send message "bye bye" to saved messages in whatsapp', "send_whatsapp_message", {"contact_name": "saved messages", "message": "bye bye"}),
+        ("send a message saying call me later to SAVED MESSAGES on whatsapp", "send_whatsapp_message", {"contact_name": "saved", "message": "call me later"}),
+        ("on whatsapp send see you soon to SAVED MESSAGES", "send_whatsapp_message", {"contact_name": "saved", "message": "see you soon"}),
+        ("whatsapp pe SAVED MESSAGES ko dinner ready bhejo", "send_whatsapp_message", {"contact_name": "saved", "message": "dinner"}),
+        ("SAVED MESSAGES ko whatsapp karo ki main aa raha hoon", "send_whatsapp_message", {"contact_name": "saved", "message": "main aa raha"}),
+        ("text SAVED MESSAGES on whatsapp saying done for today", "send_whatsapp_message", {"contact_name": "saved", "message": "done for today"}),
+        ("send hi on whatsapp to SAVED MESSAGES", "send_whatsapp_message", {"contact_name": "saved", "message": "hi"}),
+        ("whatsapp message to SAVED MESSAGES: lunch at 2", "send_whatsapp_message", {"contact_name": "saved", "message": "lunch"}),
+        ("send ok to Raman Garg on whatsapp", "send_whatsapp_message", {"contact_name": "raman garg", "message": "ok"}),
+        ("send thanks to SAVED MESSAGES and Raman Garg on whatsapp", None, {}),  # two recipients - must not guess
+        ("message SAVED MESSAGES call mom on whatsapp", None, {}),  # ambiguous split - must not guess
+        ("send a whatsapp", None, {}), ("whatsapp someone", None, {}),
+        # refusals: things Vaayu must not guess at
+        ("shut down the laptop", None, {}), ("restart my computer", None, {}), ("put the laptop to sleep", None, {}),
+        ("hibernate the pc", None, {}), ("delete everything in downloads", None, {}), ("format the d drive", None, {}),
+        ("install vlc", None, {}), ("uninstall spotify", None, {}), ("pay 200 on paytm", None, {}),
+        ("open phonepe and send money", None, {}), ("log out of windows", None, {}),
+        # mixed multi-step: first step must be right
+        ("open spotify and play some music", "open_app", {"app_name": "spotify"}),
+        ("open chrome and then show me the news", "open_app", {"app_name": "chrome"}),
+        ("close discord and play kesariya on youtube", "close_app", {"app_name": "discord"}),
+        ("lock the laptop after taking a screenshot", "take_screenshot", {}),
+        ("open notepad then type the meeting is at 4", "open_app", {"app_name": "notepad"}),
+        ("mute and open whatsapp", "control_media", {"action": "mute"}),
+        ("turn off wifi and lock the laptop", "set_radio", {"kind": "wifi", "state": "off"}),
+        ("whatsapp kholo aur SAVED MESSAGES ko hello bhejo", "open_app", {"app_name": "whatsapp"}),
+        ("pause the music and tell me the battery", "control_media", {"action": "play_pause"}),
+        ("take a screenshot and save a note saying bug in login", "take_screenshot", {}),
+        # misc everyday
+        ("what's the battery like", "get_system_status", {}), ("charging ho raha hai kya", "get_system_status", {}),
+        ("take a ss", "take_screenshot", {}), ("lock kar do", "lock_computer", {}),
+        ("show my open tabs", "list_browser_tabs", {}), ("close current tab", "close_browser_tab", {}),
+        ("next tab", "switch_to_browser_tab", {}), ("go full screen", "set_video_fullscreen", {"fullscreen": "true"}),
+        ("video aage badhao 10 second", "seek_video", {"direction": "forward"}), ("pause the video please", "control_video_playback", {}),
+        ("note: buy a new charger", "add_note", {"text": "charger"}), ("type ok done", "type_text", {"text": "ok done"}),
+        ("search youtube for funny cat videos", "play_video_on_youtube", {"query": "cat"}),
+        ("bas", None, {}), ("chalo theek hai", None, {}), ("good job vaayu", None, {}), ("sorry", None, {}),
+    ]:
+        H.append(case("holdout2", t, tool, **args))
     return H
 
 
@@ -384,10 +459,10 @@ def main():
     ap.add_argument("--mode", choices=["new", "old"], default="new")
     ap.add_argument("--sample", type=int, default=0, help="stratified random subset size (0 = all)")
     ap.add_argument("--out", default="data/benchmark")
-    ap.add_argument("--set", choices=["main", "holdout"], default="main")
+    ap.add_argument("--set", choices=["main", "holdout", "holdout2"], default="main")
     a = ap.parse_args()
 
-    cases = build_cases() if a.set == "main" else build_holdout()
+    cases = {"main": build_cases, "holdout": build_holdout, "holdout2": build_holdout2}[a.set]()
     if a.sample:
         by_cat = defaultdict(list)
         for cs in cases:
@@ -408,7 +483,7 @@ def main():
 
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
-    path = out / f"{a.model.replace(':', '_')}_{a.mode}{'_holdout' if a.set == 'holdout' else ''}.json"
+    path = out / f"{a.model.replace(':', '_')}_{a.mode}{'' if a.set == 'main' else '_' + a.set}.json"
     results = []
     with patch.object(ToolRegistry, "dispatch", recording_dispatch), \
             patch("assistant.llm.ollama_client.issue_log.log_issue"):

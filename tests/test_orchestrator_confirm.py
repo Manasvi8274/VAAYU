@@ -94,3 +94,21 @@ def test_voice_confirm_false_on_unrelated_reply(monkeypatch):
     result = orch._voice_confirm("send_whatsapp_message", {"contact_name": "Mom", "message": "hi"})
 
     assert result is False
+
+
+def test_a_crashing_or_timed_out_model_call_is_spoken_as_an_apology_not_fatal(monkeypatch):
+    # A benchmark run hung on one model call; with the client timeout that now
+    # raises - which must not end Vaayu's listening loop.
+    from assistant.orchestrator import State
+
+    orch = _make_orchestrator(transcript="open the thing")
+    orch._maybe_run_daily_checkin = MagicMock()
+    orch.state = State.AWAKE
+    orch.messages = []
+    orch.brain = MagicMock()
+    orch.brain.respond.side_effect = TimeoutError("timed out")
+    monkeypatch.setattr("assistant.orchestrator.issue_log.log_issue", MagicMock())
+
+    orch.handle_one_turn()
+
+    orch._speak.assert_called_once_with("Sorry, that took too long or went wrong - please try again.")
