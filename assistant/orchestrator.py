@@ -55,7 +55,7 @@ from assistant.control_phrases import (
 )
 from assistant.llm.ollama_client import OllamaBrain
 from assistant.llm.prompts import SYSTEM_PROMPT
-from assistant import interaction_log
+from assistant import interaction_log, memory
 from assistant.interaction_log import Timer
 from assistant.self_review import issue_log
 from assistant.stt.whisper_stt import WhisperSTT
@@ -381,6 +381,12 @@ class Orchestrator:
                 interaction_log.log_error("brain.respond", exc, text=text)
                 reply = "Sorry, that took too long or went wrong - please try again."
         self.messages = _trim_history(self.messages)
+        # Remember the talk (data/conversations.jsonl), and learn lasting facts
+        # from personal conversation - here, not in brain.respond, so only real
+        # turns are remembered, never benchmark/test runs.
+        memory.log_turn(text, reply)
+        if error is None and any(step.get("path") == "chat" for step in self.brain.trace):
+            memory.learn_async(self.brain.client, self.brain.model, text, reply)
         print(f"Assistant: {reply}")
         with Timer() as speak_time:
             self._speak(reply)

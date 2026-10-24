@@ -16,9 +16,11 @@ from typing import Callable
 
 import ollama
 
+from assistant import memory
 from assistant.llm import router
+from assistant.llm.prompts import BROTHER_PROMPT
 from assistant.self_review import issue_log
-from assistant.tools import names
+from assistant.tools import names, notes
 from assistant.tools.registry import ToolRegistry
 
 _CODE_BLOCK_RE = re.compile(r"```.*?```", re.DOTALL)
@@ -115,6 +117,40 @@ def _looks_like_action_request(text: str) -> bool:
     return any(verb in lowered for verb in _ACTION_VERBS)
 
 
+# Conversation vs command, for whatever fast_route didn't handle. Whole words
+# here ("upset" is not "set"). Strong verbs are commands even inside personal
+# talk ("I'm bored, play something"); weak ones aren't ("I want to quit my
+# job" is life advice, not close_app).
+_STRONG_VERBS = re.compile(r"\b(?:open|play|pause|resume|mute|unmute|volume|increase|decrease|raise|lower|turn up|"
+                           r"turn down|minimi[sz]e|maximi[sz]e|full ?screen|search|go to|navigate|click|switch|press|"
+                           r"keys?|hotkey|summari[sz]e)\b|^\w+ chahiye$", re.I)
+_WEAK_VERBS = re.compile(r"\b(?:close|shut|quit|exit|stop|send|message|type|write|set|delete|remove|find)\b", re.I)
+_TOOL_TOPIC = re.compile(r"\b(?:battery|charg\w*|wi-?fi|internet|bluetooth|awaa?z|videos?|youtube|tabs?|windows?|apps?|"
+                         r"screen\w*|files?|folders?|notes?|whatsapp|browser|brave|chrome|edge|music|songs?|gaana|mic|"
+                         r"speakers?|usb|printers?|monitors?|cpu|ram|disk|memory|storage|wallpaper|page|website|"
+                         r"spreadsheet|documents?|pdf|excel|firefox|auto|quality|\d+p)\b", re.I)
+_PERSONAL = re.compile(r"\b(?:i|i'm|im|i've|i'd|my|me|myself|mujhe|mujhko|mera|meri|mere|main|mai|hum|life|feel|"
+                       r"feeling|bhai|tum|tu|aap|you think|advice|opinion)\b", re.I)
+_FORGET_ALL = re.compile(r"^(?:forget|bhool jao?) (?:everything|all of it|sab kuch|sab)\b.*$|"
+                         r"^forget (?:what|everything) i (?:told|said to) you$", re.I)
+_FORGET_ABOUT = re.compile(r"^forget (?:what i (?:told|said to) you |everything i (?:told|said to) you )?about (?P<a>.+)$|"
+                           r"^(?P<a2>.+?) (?:ke baare mein |wali baat )?bhool jao?$", re.I)
+_CHAT_TURNS = 6
+_CHAT_FACTS = 40
+
+
+def _is_conversation(text: str) -> bool:
+    t = router.normalize(text)
+    if not t or _STRONG_VERBS.search(t) or _TOOL_TOPIC.search(t):
+        return False
+    if any(re.search(rf"\b{re.escape(app.lower())}\b", t, re.I) for app in names.load()["app"]):
+        return False
+    # Starts like a command ("close it", "check this") - "tell me..."/"...batao" are questions, fine to chat.
+    if router._ACTION_START.search(t) and not re.search(r"^tell me\b|\bbatao$", t, re.I):
+        return False
+    return bool(_PERSONAL.search(t)) or not _WEAK_VERBS.search(t)
+
+
 def cli_confirm(name: str, arguments: dict) -> bool:
     """Default confirmation prompt for text-mode milestones (M1/M2).
     Swapped for a voice-based confirmation once the assistant can speak (M3+)."""
@@ -122,7 +158,7 @@ def cli_confirm(name: str, arguments: dict) -> bool:
     return answer.strip().lower() in ("y", "yes")
 
 
-def _sanitize_reply(text: str) -> str:
+def _sanitize_reply(text: str, max_sentences: int = 2) -> str:
     """This assistant only acts through real registered tools - it must never
     present code (or a hallucinated fake tool call) as if it were executing
     something. Weak local models sometimes hallucinate a code block instead
@@ -147,8 +183,8 @@ def _sanitize_reply(text: str) -> str:
     if _TOOL_NAME_RE.search(cleaned):
         return _DIDNT_GET_IT
     sentences = re.split(r"(?<=[.!?])\s+", cleaned)
-    if len(cleaned) > _MAX_SPOKEN_CHARS and len(sentences) > 2:
-        cleaned = " ".join(sentences[:2])
+    if len(cleaned) > _MAX_SPOKEN_CHARS and len(sentences) > max_sentences:
+        cleaned = " ".join(sentences[:max_sentences])
     return cleaned
 
 
@@ -191,6 +227,43 @@ class OllamaBrain:
             options={"num_ctx": 2048, "num_predict": _MAX_REPLY_TOKENS},
         )
         return _sanitize_reply(response["message"].get("content", ""))
+
+    def _chat(self, messages: list[dict], user_text: str) -> tuple[str, list[dict]]:
+        """Personal talk, opinions, advice: the big-brother persona, no tools,
+        with what Vaayu remembers about the user. Learning new facts from this
+        turn is the orchestrator's job (real turns only, never benchmarks)."""
+        t = router.normalize(user_text)
+        forgetting = bool(_FORGET_ALL.match(t) or _FORGET_ABOUT.match(t))
+        self.trace.append({"path": "chat_forget" if forgetting else "chat"})  # nothing to learn from a forget
+        if _FORGET_ALL.match(t):
+            memory.forget()
+            reply = "Done, I've forgotten everything you told me."
+            return reply, messages + [{"role": "assistant", "content": reply}]
+        if m := _FORGET_ABOUT.match(t):
+            removed = memory.forget(m.group("a") or m.group("a2"))
+            reply = "Done, I've forgotten that." if removed else "I didn't have anything saved about that."
+            return reply, messages + [{"role": "assistant", "content": reply}]
+        system = BROTHER_PROMPT
+        if known := memory.facts(_CHAT_FACTS):
+            system += "\nWhat you remember about them:\n" + "\n".join(f"- {f}" for f in known)
+        try:
+            saved = [n["text"] for n in notes.list_notes(5)]
+        except Exception:  # notes DB unreadable - chat still works
+            saved = []
+        if saved:
+            system += "\nTheir recent notes:\n" + "\n".join(f"- {n}" for n in saved)
+        history = []
+        for turn in memory.recent_turns(_CHAT_TURNS):
+            history += [{"role": "user", "content": turn["user"]}, {"role": "assistant", "content": turn["reply"]}]
+        response = self.client.chat(
+            model=self.model,
+            messages=[{"role": "system", "content": system}, *history, {"role": "user", "content": user_text}],
+            keep_alive=_KEEP_ALIVE,
+            think=_THINK,
+            options={"num_ctx": 4096, "num_predict": 200},
+        )
+        reply = _sanitize_reply(response["message"].get("content", ""), max_sentences=4)
+        return reply, messages + [{"role": "assistant", "content": reply}]
 
     def respond(
         self,
@@ -268,6 +341,8 @@ class OllamaBrain:
                         break
                 reply = " ".join(replies)
                 return reply, messages + [{"role": "assistant", "content": reply}]
+            if _is_conversation(last_user_text):
+                return self._chat(messages, last_user_text)
             tool_registry = router.select_tools(last_user_text, tool_registry)
 
         for _step in range(_MAX_TOOL_STEPS):

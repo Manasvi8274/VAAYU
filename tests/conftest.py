@@ -139,6 +139,23 @@ def _isolated_known_names(tmp_path_factory):
 
 
 @pytest.fixture(autouse=True, scope="session")
+def _isolated_memory(tmp_path_factory):
+    # Vaayu's memory of the user (conversations, learned facts) and the notes
+    # DB the chat path reads are the user's real data - tests may not touch
+    # them, and learning must never make a real LLM call from a test.
+    from assistant import memory
+    from assistant.storage import db
+    base = tmp_path_factory.mktemp("memory")
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(memory, "CONVERSATIONS_PATH", base / "conversations.jsonl")
+        mp.setattr(memory, "FACTS_PATH", base / "memory_facts.json")
+        mp.setattr(db, "_DB_PATH", base / "assistant.db")
+        mp.setattr(memory, "_real_learn_async", memory.learn_async, raising=False)
+        mp.setattr(memory, "learn_async", lambda *a, **k: None)
+        yield
+
+
+@pytest.fixture(autouse=True, scope="session")
 def _no_real_audio_saving():
     # handle_one_turn saves each utterance to the real data/audio/ - tests may not.
     from assistant import orchestrator
