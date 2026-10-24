@@ -164,13 +164,16 @@ def _check_frozen_prefix():
     print(f"frozen-prefix loss {loss.item():.5f} == full-sequence loss {want.item():.5f}; LoRA grads flow")
 
 
-def train(epochs=1, accum=8, lr=1e-4, max_len=1024, save_every=10):
+def train(epochs=1, accum=8, lr=1e-4, max_len=1024, save_every=10, cats=None):
     import bitsandbytes as bnb
     import numpy as np
     import torch
     from peft import get_peft_model_state_dict, set_peft_model_state_dict
     tok = _tokenizer()
-    data = [e for e in (encode(ex, tok) for ex in _load("train")) if len(e[0]) - e[2] <= max_len]
+    # cats: only these categories (prefixes) - tool turns carry a ~3.6k-token system prompt
+    # that overflows the 4 GB card into shared memory; chat/web/refusal turns are short.
+    rows = [ex for ex in _load("train") if not cats or ex["cat"].startswith(tuple(cats))]
+    data = [e for e in (encode(ex, tok) for ex in rows) if len(e[0]) - e[2] <= max_len]
     model = _model()
     model.print_trainable_parameters()
     opt = bnb.optim.AdamW8bit([p for p in model.parameters() if p.requires_grad], lr=lr, weight_decay=0.0)
@@ -266,10 +269,11 @@ if __name__ == "__main__":
     ap.add_argument("--epochs", type=int, default=1)
     ap.add_argument("--max-len", type=int, default=1024, help="max trained tokens after the frozen prefix")
     ap.add_argument("--adapter", help="export: adapter folder (default data/llm_distill_run/adapter)")
+    ap.add_argument("--cats", help="train only these categories, comma-separated prefixes (e.g. chat,web,refusal)")
     a = ap.parse_args()
     if a.cmd == "check":
         check()
     elif a.cmd == "train":
-        train(epochs=a.epochs, max_len=a.max_len)
+        train(epochs=a.epochs, max_len=a.max_len, cats=a.cats.split(",") if a.cats else None)
     else:
         export(a.adapter)

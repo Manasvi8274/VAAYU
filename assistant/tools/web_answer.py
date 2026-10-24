@@ -107,11 +107,14 @@ def answer_question(question: str) -> dict:
                                                              "skip_disambig": 1})
     except ConnectionError:
         pass
-    answer = str(instant.get("Answer") or instant.get("AbstractText") or "")[:300]
+    answer = str(instant.get("Answer") or "")[:300]
+    abstract = str(instant.get("AbstractText") or "")[:300]
     try:
         results = [{"title": r.get("title", ""), "snippet": (r.get("body") or "")[:220]} for r in _ddg_text(question)]
     except ConnectionError:
-        if not answer:
+        if not (answer or abstract):
             raise
         results = []
-    return {"question": question, "instant_answer": answer, "results": results}
+    # The abstract is a Wikipedia definition - live, "who is the prime minister of india" got "The prime
+    # minister of India is the head of government..." and the reply never named anyone. Results first.
+    return {"question": question, "results": results, "instant_answer": answer or ("" if results else abstract)}
