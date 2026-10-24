@@ -21,9 +21,11 @@ from assistant.tools.registry import registry
 # makes when no CDP-debugged browser is actually running (measured 4.06s vs
 # 2.04s for the identical request, IPv4-only vs "localhost").
 _CDP_BASE = "http://127.0.0.1:9222"
+# Said to the user - so it names what to DO, not the port. (It used to say
+# "Chrome must be started with..." to a user who was using Brave.)
 _NOT_AVAILABLE_MSG = (
-    "Can't reach Chrome's remote debugging port (9222). Chrome must be started "
-    "with --remote-debugging-port=9222 for tab control to work - see README."
+    "I can't control the browser's tabs right now - it has to be opened by me. Close the browser "
+    "and say 'open brave' (or chrome/edge), then try again."
 )
 
 

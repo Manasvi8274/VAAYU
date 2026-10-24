@@ -112,3 +112,59 @@ def test_a_crashing_or_timed_out_model_call_is_spoken_as_an_apology_not_fatal(mo
     orch.handle_one_turn()
 
     orch._speak.assert_called_once_with("Sorry, that took too long or went wrong - please try again.")
+
+
+def _read_log():
+    import json
+    from assistant import interaction_log
+    return [json.loads(line) for line in interaction_log.LOG_PATH.read_text(encoding="utf-8").splitlines()]
+
+
+def test_every_turn_is_logged_with_what_was_heard_the_reply_and_the_tool_trace(monkeypatch):
+    from assistant import interaction_log
+    from assistant.orchestrator import State
+
+    interaction_log.LOG_PATH.unlink(missing_ok=True)
+    orch = _make_orchestrator(transcript="open notepad")
+    orch._maybe_run_daily_checkin = MagicMock()
+    orch.state = State.AWAKE
+    orch.messages = []
+    orch.brain = MagicMock(trace=[])
+
+    def fake_respond(messages, reg, confirm):
+        orch.brain.trace.append({"path": "fast", "tool": "open_app", "args": {"app_name": "notepad"}, "ok": True})
+        return "Opened notepad.", messages
+
+    orch.brain.respond.side_effect = fake_respond
+    orch.handle_one_turn()
+
+    events = _read_log()
+    assert [e["kind"] for e in events] == ["heard", "turn"]
+    assert events[0]["text"] == "open notepad" and events[0]["state"] == "awake"
+    turn = events[1]
+    assert turn["reply"] == "Opened notepad."
+    assert turn["trace"] == [{"path": "fast", "tool": "open_app", "args": {"app_name": "notepad"}, "ok": True}]
+    assert {"brain_ms", "speak_ms", "stt_ms"} <= turn.keys()
+
+
+def test_speech_ignored_while_asleep_is_still_logged():
+    from assistant import interaction_log
+
+    interaction_log.LOG_PATH.unlink(missing_ok=True)
+    orch = _make_orchestrator(transcript="what a nice day")
+    orch._maybe_run_daily_checkin = MagicMock()
+    from assistant.orchestrator import State
+    orch.state = State.SLEEPING
+    orch.handle_one_turn()
+    assert [e["kind"] for e in _read_log()] == ["heard", "ignored_sleeping"]
+
+
+def test_history_keeps_only_the_last_few_user_turns():
+    from assistant.orchestrator import _HISTORY_USER_TURNS, _trim_history
+
+    msgs = [{"role": "system", "content": "sys"}]
+    for i in range(10):
+        msgs += [{"role": "user", "content": f"u{i}"}, {"role": "assistant", "content": f"a{i}"}]
+    trimmed = _trim_history(msgs)
+    assert trimmed[0]["content"] == "sys"
+    assert [m["content"] for m in trimmed if m["role"] == "user"] == [f"u{i}" for i in range(10 - _HISTORY_USER_TURNS, 10)]

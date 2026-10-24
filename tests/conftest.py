@@ -78,3 +78,27 @@ def _no_real_radio_queries():
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(network_status, "_radio_ps", lambda kind, state: "On")
         yield
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _no_real_browser_launches():
+    # open_app launches Chromium browsers directly (with the DevTools port)
+    # via subprocess.Popen - found the hard way: an older open_app test
+    # started the user's real Brave. Nothing in the suite may launch a real
+    # program; browser-launch tests assert on this stub instead.
+    from unittest.mock import MagicMock
+    from assistant.tools import apps
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(apps, "_launch_with_port", MagicMock())
+        mp.setattr(apps, "_cdp_up", lambda: False)
+        yield
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _isolated_interaction_log(tmp_path_factory):
+    # Same reason as the self_review isolation above: tests must never write
+    # into the real data/interactions.jsonl that real sessions are logged to.
+    from assistant import interaction_log
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(interaction_log, "LOG_PATH", tmp_path_factory.mktemp("interactions") / "interactions.jsonl")
+        yield

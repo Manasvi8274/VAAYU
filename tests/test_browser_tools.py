@@ -85,5 +85,5 @@ def test_connection_error_raises_helpful_message():
     import urllib.error
 
     with patch("urllib.request.urlopen", side_effect=urllib.error.URLError("refused")):
-        with pytest.raises(ConnectionError, match="remote debugging port"):
+        with pytest.raises(ConnectionError, match="has to be opened by me"):
             browser.list_browser_tabs()

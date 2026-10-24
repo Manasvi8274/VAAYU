@@ -138,3 +138,47 @@ def test_close_app_dispatch_through_real_registry_reports_success_only_when_real
     mock_close.assert_called_once()
     assert result["ok"] is True
     assert result["result"] == "Closed brave."
+
+
+_FAKE_BROWSERS = {"brave": r"C:\fake\brave.exe", "google chrome": r"C:\fake\chrome.exe"}
+
+
+def _patched_browser_env(running_exes=()):
+    from unittest.mock import MagicMock
+    procs = [MagicMock(exe=MagicMock(return_value=e)) for e in running_exes]
+    return (patch.object(apps.browser_state, "_enumerate_registered_browsers", return_value=_FAKE_BROWSERS),
+            patch.object(apps.psutil, "process_iter", return_value=procs),
+            patch.object(apps, "foreground_by_title"), patch.object(apps.browser_state, "note_app_opened"),
+            patch.object(apps, "app_open"))
+
+
+def test_open_brave_launches_it_with_the_devtools_port_not_via_appopener():
+    a, b, c, d, e = _patched_browser_env()
+    with a, b, c, d, e as app_open, patch.object(apps, "_launch_with_port") as launch:
+        reply = apps.open_app("brave")
+    launch.assert_called_once_with(r"C:\fake\brave.exe")
+    app_open.assert_not_called()
+    assert reply == "Opened Brave."
+
+
+def test_brave_already_running_without_the_port_says_how_to_fix_it():
+    a, b, c, d, e = _patched_browser_env(running_exes=[r"c:\fake\brave.exe"])
+    with a, b, c, d, e, patch.object(apps, "_launch_with_port") as popen, patch.object(apps, "_cdp_up", return_value=False):
+        reply = apps.open_app("brave browser")
+    popen.assert_not_called()  # relaunching would just open another window
+    assert "wasn't opened by me" in reply and "Close Brave" in reply
+
+
+def test_brave_already_running_with_the_port_is_just_brought_forward():
+    a, b, c, d, e = _patched_browser_env(running_exes=[r"c:\fake\brave.exe"])
+    with a, b, c, d, e, patch.object(apps, "_launch_with_port") as popen, patch.object(apps, "_cdp_up", return_value=True):
+        assert apps.open_app("brave") == "Brave is already open."
+    popen.assert_not_called()
+
+
+def test_non_browser_apps_still_use_appopener():
+    a, b, c, d, e = _patched_browser_env()
+    with a, b, c, d, e as app_open:
+        apps.open_app("notepad")
+    app_open.assert_called_once()
+

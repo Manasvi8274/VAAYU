@@ -148,10 +148,21 @@ class OllamaBrain:
         # the plain every-tool LLM loop (the old behavior, used as the
         # benchmark baseline and by the LLM-loop unit tests).
         self.fast_paths = fast_paths
+        # What the last respond() did, for data/interactions.jsonl: which path
+        # handled it, every LLM call and every tool call with its outcome.
+        # The caller resets it per turn; multi-step sub-turns append to it.
+        self.trace: list[dict] = []
+
+    def _dispatch(self, registry: ToolRegistry, name: str, arguments: dict, path: str) -> dict:
+        result = registry.dispatch(name, arguments)
+        self.trace.append({"path": path, "tool": name, "args": arguments, "ok": bool(result.get("ok")),
+                           "result" if result.get("ok") else "error": str(result.get("result" if result.get("ok") else "error"))})
+        return result
 
     def _phrase_result(self, user_text: str, name: str, result) -> str:
         """One small, tool-free LLM call that turns a data result (wifi
         details, mic level...) into a spoken sentence."""
+        self.trace.append({"path": "llm_call", "purpose": "phrase_result", "tool": name})
         response = self.client.chat(
             model=self.model,
             messages=[
@@ -205,14 +216,16 @@ class OllamaBrain:
         if self.fast_paths:
             routed = router.fast_route(last_user_text)
             if routed and routed[0] == "reply":
+                self.trace.append({"path": "fast_reply"})
                 return routed[1], messages + [{"role": "assistant", "content": routed[1]}]
             if routed and all(name in tool_registry._tools for name, _args in routed[1]):
                 replies = []
                 for name, arguments in routed[1]:  # multi-step: in order, stop at the first failure
                     if tool_registry.requires_confirmation(name) and not confirm(name, arguments):
+                        self.trace.append({"path": "fast", "tool": name, "args": arguments, "declined": True})
                         replies.append("Okay, I won't do that.")
                         break
-                    tool_result = tool_registry.dispatch(name, arguments)
+                    tool_result = self._dispatch(tool_registry, name, arguments, "fast")
                     if not tool_result.get("ok"):
                         error_text = str(tool_result.get("error", "something went wrong"))
                         issue_log.log_issue(user_said=last_user_text, tool_name=name, error=error_text)
@@ -230,6 +243,7 @@ class OllamaBrain:
                 # command, in order - a step that fails stops the rest.
                 # (Steps can't split again: split_steps needs a connector.)
                 base = messages[:-1] if messages and messages[-1].get("role") == "user" else messages
+                self.trace.append({"path": "steps", "steps": steps})
                 replies = []
                 for step in steps:
                     step_reply, _ = self.respond(base + [{"role": "user", "content": step}], tool_registry, confirm)
@@ -241,6 +255,7 @@ class OllamaBrain:
             tool_registry = router.select_tools(last_user_text, tool_registry)
 
         for _step in range(_MAX_TOOL_STEPS):
+            self.trace.append({"path": "llm_call", "tools_offered": list(tool_registry._tools)})
             response = self.client.chat(
                 model=self.model,
                 messages=messages,
@@ -270,6 +285,7 @@ class OllamaBrain:
                     # Also worth a daily-check-in mention even though it
                     # self-corrects here - it's a real reliability signal.
                     nudged = True
+                    self.trace.append({"path": "llm", "grounding_nudge": True, "model_said": assistant_msg.get("content", "")})
                     issue_log.log_issue(
                         user_said=last_user_text,
                         tool_name=None,
@@ -286,6 +302,7 @@ class OllamaBrain:
             arguments = call["function"].get("arguments") or {}
 
             if self.fast_paths and (blocked := router.blocked_reply(name)):
+                self.trace.append({"path": "llm", "tool": name, "args": arguments, "blocked": True})
                 # e.g. WhatsApp: the model swapped "SAVED MESSAGES" for "mom"
                 # in the benchmark - recipients only ever come from fast_route.
                 return blocked, messages + [{"role": "assistant", "content": blocked}]
@@ -297,9 +314,10 @@ class OllamaBrain:
 
             if tool_registry.requires_confirmation(name) and not confirm(name, arguments):
                 tool_result = {"ok": False, "error": "User declined to confirm this action."}
+                self.trace.append({"path": "llm", "tool": name, "args": arguments, "declined": True})
                 last_action_failed = False  # declining is a normal outcome, not a failure to correct
             else:
-                tool_result = tool_registry.dispatch(name, arguments)
+                tool_result = self._dispatch(tool_registry, name, arguments, "llm")
                 last_action_failed = not tool_result.get("ok")
                 if last_action_failed:
                     # A real tool failure, not the user declining a
@@ -324,6 +342,7 @@ class OllamaBrain:
         # Hit the step cap without a final text reply - force one more call
         # with tools withheld, so the model must summarize instead of
         # attempting yet another action.
+        self.trace.append({"path": "llm_call", "purpose": "forced_summary"})
         final_response = self.client.chat(
             model=self.model,
             messages=messages,

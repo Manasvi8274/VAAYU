@@ -1,6 +1,8 @@
 import contextlib
 import io
+import subprocess
 import time
+import urllib.request
 
 import psutil
 from AppOpener import close as app_close
@@ -74,6 +76,64 @@ def _find_matching_process_name(app_name: str) -> str | None:
     return None
 
 
+# Chromium browsers are launched directly WITH the DevTools port, instead of
+# through AppOpener - the YouTube/tab/page tools all drive the browser over
+# that port, and a browser started without it can't be controlled (found
+# live: "play the latest OG Crew video" failed after Vaayu itself had just
+# opened Brave the normal way). Verified live: Brave with the user's real
+# profile exposes the port within 0.5 s.
+_CDP_VERSION_URL = "http://127.0.0.1:9222/json/version"
+_CHROMIUM_NAMES = {"brave": "brave", "chrome": "google chrome", "google chrome": "google chrome",
+                   "edge": "microsoft edge", "microsoft edge": "microsoft edge", "comet": "comet"}
+
+
+def _cdp_up() -> bool:
+    try:
+        with urllib.request.urlopen(_CDP_VERSION_URL, timeout=1):
+            return True
+    except OSError:
+        return False
+
+
+def _open_browser_with_automation(app_name: str, foreground: bool) -> str | None:
+    key = _CHROMIUM_NAMES.get(app_name.strip().lower().removesuffix(" browser"))
+    exe = browser_state._enumerate_registered_browsers().get(key) if key else None
+    if not exe:
+        return None
+    label = key.title()
+    running = any(_proc_exe(p) == exe.lower() for p in psutil.process_iter())
+    if running:
+        # Launching again would just open another window of the running
+        # browser - and the port flag only takes effect at a fresh start.
+        if foreground:
+            foreground_by_title(app_name)
+        browser_state.note_app_opened(app_name)
+        if _cdp_up():
+            return f"{label} is already open."
+        return (f"{label} is already open, but it wasn't opened by me, so I can't control its tabs or YouTube. "
+                f"Close {label} and say 'open {app_name}' to let me reopen it.")
+    _launch_with_port(exe)
+    browser_state.note_app_opened(app_name)
+    if foreground:
+        foreground_by_title(app_name)
+    return f"Opened {label}." + ("" if foreground else " (in the background)")
+
+
+def _launch_with_port(exe: str) -> None:
+    subprocess.Popen([exe, "--remote-debugging-port=9222"])
+    for _ in range(20):  # up to 5 s for the port, so the next step (open YouTube...) can use it
+        if _cdp_up():
+            return
+        time.sleep(0.25)
+
+
+def _proc_exe(p) -> str:
+    try:
+        return (p.exe() or "").lower()
+    except (psutil.NoSuchProcess, psutil.AccessDenied):
+        return ""
+
+
 @registry.register(
     name="open_app",
     description=(
@@ -108,6 +168,9 @@ def _find_matching_process_name(app_name: str) -> str | None:
 )
 def open_app(app_name: str, foreground: bool = True) -> str:
     check_not_payment(app_name)
+    browser_reply = _open_browser_with_automation(app_name, foreground)
+    if browser_reply:
+        return browser_reply
     resolved_name = _resolve_open_app_name(app_name)
     with _quiet_stdout():
         app_open(resolved_name, match_closest=True, output=True, throw_error=True)

@@ -39,6 +39,7 @@ RESTART_WINDOW_SECONDS = 600
 # count as speech. Calibration knob - raise it in a noisy room, lower it if
 # "Vaayu die" from across the room isn't picked up.
 _SPEECH_OVER_FLOOR = 2.5
+_MIN_NOISE_FLOOR = 20.0  # never trust a near-silent calibration
 _KILL_MODEL = "base"  # "tiny" misheard the TTS-through-speaker test badly; base is already cached for Vaayu
 
 log = logging.getLogger("guardian")
@@ -261,7 +262,12 @@ def _phrase_loop(trigger, stop: threading.Event) -> None:
         frames: "queue.Queue[bytes]" = queue.Queue()
         with sd.RawInputStream(samplerate=Segmenter.RATE, blocksize=Segmenter.FRAME, dtype="int16", channels=1,
                                callback=lambda data, n, t, s: frames.put(bytes(data))):
-            floor = float(np.median([Segmenter.rms(frames.get()) for _ in range(33)]))  # ~1 s of room
+            # ~1 s of room noise, after skipping the first ~0.5 s: a fresh stream
+            # (opened alongside Vaayu's) returned silence at first, which gave a
+            # floor of 1 live and let room noise count as speech again.
+            for _ in range(15):
+                frames.get()
+            floor = max(float(np.median([Segmenter.rms(frames.get()) for _ in range(33)])), _MIN_NOISE_FLOOR)
             seg = Segmenter(webrtcvad.Vad(2), floor)
             log.info('"Vaayu die" listener running (noise floor %.0f)', floor)
             while not stop.is_set():
@@ -269,7 +275,12 @@ def _phrase_loop(trigger, stop: threading.Event) -> None:
                     audio = seg.feed(frames.get(timeout=0.5))
                 except queue.Empty:
                     continue
-                if audio and is_kill_phrase(text := transcribe_short(model, audio)):
+                if not audio:
+                    continue
+                text = transcribe_short(model, audio)
+                if os.environ.get("GUARDIAN_DEBUG"):  # opt-in: what the listener heard, for tuning
+                    log.info("heard %r (noise floor %.0f)", text, seg.floor)
+                if is_kill_phrase(text):
                     log.info("kill phrase heard: %r", text)
                     trigger("phrase")
                     return

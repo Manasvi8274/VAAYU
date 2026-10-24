@@ -67,6 +67,27 @@ _MEDIA = [
 ]
 _MEDIA = [(re.compile(rf"^(?:{p})$", re.I), a) for p, a in _MEDIA]
 
+# Well-known sites: "open youtube" means the website, not an installed app
+# (found live: open_app('youtube') -> "YOUTUBE is not running"). Desktop apps
+# that share a name (whatsapp, spotify, telegram...) are deliberately absent.
+_SITES = {
+    "youtube": "youtube.com", "yt": "youtube.com", "youtube music": "music.youtube.com", "gmail": "mail.google.com",
+    "google": "google.com", "google maps": "maps.google.com", "maps": "maps.google.com",
+    "google drive": "drive.google.com", "drive": "drive.google.com", "instagram": "instagram.com", "insta": "instagram.com",
+    "facebook": "facebook.com", "twitter": "x.com", "linkedin": "linkedin.com", "netflix": "netflix.com",
+    "hotstar": "hotstar.com", "jiohotstar": "hotstar.com", "prime video": "primevideo.com", "amazon": "amazon.in",
+    "flipkart": "flipkart.com", "github": "github.com", "chatgpt": "chatgpt.com", "reddit": "reddit.com",
+    "wikipedia": "wikipedia.org", "whatsapp web": "web.whatsapp.com", "zomato": "zomato.com", "swiggy": "swiggy.com",
+    "myntra": "myntra.com", "irctc": "irctc.co.in", "claude": "claude.ai", "perplexity": "perplexity.ai",
+}
+_BROWSERS = r"(?:brave|chrome|google chrome|edge|microsoft edge|firefox|comet)"
+_SITE_OPEN = re.compile(
+    rf"^(?:open|launch|start|go to|visit)(?: up)? (?:the )?(?P<site>{'|'.join(sorted(map(re.escape, _SITES), key=len, reverse=True))})"
+    rf"(?: website| site| page)?(?: (?:in|on) (?:a )?new tab)?(?: (?:in|on|using) (?:the )?(?P<browser>{_BROWSERS})(?: browser)?)?"
+    rf"(?: (?:in|on) (?:a )?new tab)?$|"
+    rf"^(?P<site2>{'|'.join(sorted(map(re.escape, _SITES), key=len, reverse=True))})(?: website| site)? "
+    rf"(?:kholo|khol do|open karo|open kro|chalao)$", re.I)
+
 _OPEN_VERB = r"(?:open|launch|start|fire up|bring up|run)"
 _OPEN = [
     re.compile(rf"^{_OPEN_VERB}(?: up)? (?:the )?(?P<app>.+?)(?: app| application| browser)?(?P<bg> in (?:the )?background)?$", re.I),
@@ -167,6 +188,10 @@ _TAB_SWITCH = re.compile(r"^(?:go|switch|move) (?:back )?to (?:the )?(?P<q>.+?) 
 _LIST_TABS = re.compile(r"^(?:what|which) tabs (?:are|do i have) open$|^(?:list|show)(?: me)?(?: all)?(?: my)?(?: open)?(?: browser)? tabs$", re.I)
 _YOUTUBE = re.compile(r"^(?:search|find|look up) (?:on )?youtube (?:for )?(?P<q>.+)$|^(?:play|search|put on) (?P<q2>.+?) on youtube$|"
                       r"^youtube (?:pe|par|pr) (?P<q3>.+?) (?:chalao|lagao|bajao|search karo|dikhao)$", re.I)
+_CHANNEL_VIDEO = re.compile(
+    r"^(?:open youtube (?:and )?)?play (?:the )?(?:latest|newest|new|most recent|recent) video (?:from|of|by|on) (?:the )?(?P<c>.+?)(?: channel| youtube channel)?(?: on youtube)?$|"
+    r"^(?P<c2>.+?) (?:ka|ki|ke) (?:latest|naya|new|nayi) video (?:chalao|lagao|dikhao|play karo)$|"
+    r"^play (?P<c3>.+?)'s (?:latest|newest|new) video$", re.I)
 _CHANNEL_HINT = re.compile(r"\b(?:latest|newest|new|naya|recent) video\b|\bchannel\b", re.I)
 _WEBSITE = re.compile(r"^(?:open|go to|visit|launch)(?: the)? (?P<url>[a-z0-9-]+\.(?:com|in|org|net|io|co|ai|dev)(?:/\S*)?)$|"
                       r"^open (?:the )?(?P<site>[a-z0-9 ]+?) (?:website|site)$", re.I)
@@ -218,8 +243,13 @@ _SMALL_TALK = [
 ]
 
 
-def normalize(text: str) -> str:
-    t = _PUNCT.sub(" ", text.strip())
+def normalize(text: str, keep_commas: bool = False) -> str:
+    raw = text.strip()
+    if keep_commas:  # for splitting steps: "open brave, play X" is two commands
+        raw = raw.replace(",", " , ")
+        t = re.sub(r"\.\.\.|(?<![a-z0-9])\.|\.(?![a-z0-9])|[!?;\"]", " ", raw, flags=re.I)
+    else:
+        t = _PUNCT.sub(" ", raw)
     t = _FILLER_WORDS.sub(" ", t)
     t = re.sub(r"\s+", " ", t).strip()
     t = _LEAD.sub("", t)
@@ -317,8 +347,16 @@ def _route_one(t: str):
         return ("tool", "list_notes", {})
     if m := _NOTE.match(t):
         return ("tool", "add_note", {"text": m.group("text") or m.group("t2") or m.group("t3")})
+    if m := _CHANNEL_VIDEO.match(t):
+        name = (m.group("c") or m.group("c2") or m.group("c3")).strip()
+        return ("tool", "play_latest_video_from_channel", {"channel_name": name})
     if (m := _YOUTUBE.match(t)) and not _CHANNEL_HINT.search(t):
         return ("tool", "play_video_on_youtube", {"query": m.group("q") or m.group("q2") or m.group("q3")})
+    if m := _SITE_OPEN.match(t):
+        url = _SITES[(m.group("site") or m.group("site2")).lower()]
+        if m.group("browser"):  # "open youtube in brave": that browser first, then the site in it
+            return ("multi", [("open_app", {"app_name": m.group("browser")}), ("open_website", {"url_or_query": url})])
+        return ("tool", "open_website", {"url_or_query": url})
     if m := _WEBSITE.match(t):
         return ("tool", "open_website", {"url_or_query": m.group("url") or m.group("site")})
     if (m := _WEB_SEARCH.match(t)) and not _LOCAL_HINT.search(t):
@@ -340,7 +378,7 @@ def _route_one(t: str):
     return None
 
 
-_SPLIT = re.compile(r"\s+(?:and then|and also|and|then|after that|aur phir|aur fir|aur|phir|fir)\s+", re.I)
+_SPLIT = re.compile(r"\s*,\s*(?:and |then |and then )?|\s+(?:and then|and also|and|then|after that|aur phir|aur fir|aur|phir|fir)\s+", re.I)
 
 
 def fast_route(text: str):
@@ -359,15 +397,20 @@ def fast_route(text: str):
     # swallow "notepad kholo aur hello likho" whole. A message that merely
     # contains "and" doesn't split cleanly into routable parts, so it falls
     # through to the single-command rules intact.
-    parts = _SPLIT.split(t)
+    parts = [normalize(p) for p in _SPLIT.split(normalize(text, keep_commas=True)) if normalize(p)]
     if len(parts) > 1:
         routed = _route_parts(parts)
-        if all(r and r[0] == "tool" for r in routed):
-            return ("tools", [r[1:] for r in routed])
+        if all(r and r[0] in ("tool", "multi") for r in routed):
+            return ("tools", [call for r in routed for call in _calls(r)])
     one = _route_one(t)
     if one:
-        return one if one[0] == "reply" else ("tools", [one[1:]])
+        return one if one[0] == "reply" else ("tools", _calls(one))
     return None
+
+
+def _calls(routed) -> list:
+    """("tool", name, args) or ("multi", [(name, args), ...]) -> [(name, args), ...]"""
+    return routed[1] if routed[0] == "multi" else [routed[1:]]
 
 
 # After "open whatsapp", a later "send hi to X" / "X ko hi bhejo" means WhatsApp.
@@ -402,11 +445,11 @@ def split_steps(text: str) -> list[str] | None:
     ones directly, the rest through the LLM - or None if it doesn't
     cleanly split into separate commands (a WhatsApp message containing
     "and" must stay whole)."""
-    parts = _SPLIT.split(normalize(text))
+    parts = [normalize(p) for p in _SPLIT.split(normalize(text, keep_commas=True)) if normalize(p)]
     if len(parts) < 2:
         return None
     routed = _route_parts(parts)
-    if not any(r and r[0] == "tool" for r in routed):
+    if not any(r and r[0] in ("tool", "multi") for r in routed):
         return None
     if not all(r or _ACTION_START.search(p) for p, r in zip(parts, routed)):
         return None

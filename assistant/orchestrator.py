@@ -51,10 +51,19 @@ from assistant.control_phrases import (
 )
 from assistant.llm.ollama_client import OllamaBrain
 from assistant.llm.prompts import SYSTEM_PROMPT
+from assistant import interaction_log
+from assistant.interaction_log import Timer
 from assistant.self_review import issue_log
 from assistant.stt.whisper_stt import WhisperSTT
 from assistant.tools.registry import registry
 from assistant.tts.pyttsx3_engine import Pyttsx3Engine
+
+
+# Conversation memory sent to the model: the last few turns only. Unbounded
+# history made every LLM call slower over a session, and stale turns ("why
+# did you not open youtube?") confused fresh commands.
+_HISTORY_USER_TURNS = 4
+_SAMPLE_RATE = 16000
 
 
 class State(Enum):
@@ -133,6 +142,8 @@ class Orchestrator:
         answer_text = self.stt.transcribe(audio)
         print(f"You said: {answer_text}")
         confirmed = is_affirmative(answer_text)
+        interaction_log.log_event("confirm", tool=name, args=arguments, question=question, heard=answer_text,
+                                  confirmed=confirmed)
         if not confirmed:
             print("Vaayu: Okay, not doing that.")
         return confirmed
@@ -194,12 +205,20 @@ class Orchestrator:
         if len(audio) == 0:
             return
 
-        text = self.stt.transcribe(audio)
+        with Timer() as stt_time:
+            text = self.stt.transcribe(audio)
+        audio_seconds = round(len(audio) / _SAMPLE_RATE, 1)
         if not text.strip():
+            interaction_log.log_event("heard_nothing", audio_seconds=audio_seconds, stt_ms=stt_time.ms,
+                                      state=self.state.value)
             return
 
         print(f"You said: {text}")
+        interaction_log.log_event("heard", text=text, state=self.state.value, audio_seconds=audio_seconds,
+                                  stt_ms=stt_time.ms)
         command = detect_control_command(text)
+        if command is not ControlCommand.NONE:
+            interaction_log.log_event("control", command=command.value, text=text, state=self.state.value)
 
         if command is ControlCommand.SHUTDOWN:
             print("Vaayu: Shutting down. Goodbye.")
@@ -218,6 +237,7 @@ class Orchestrator:
 
         if self.state is State.SLEEPING:
             if not is_name_mentioned(text):
+                interaction_log.log_event("ignored_sleeping", text=text)
                 return  # not addressed to Vaayu at all - ignore silently
             self._set_state(State.AWAKE)
             if not has_command_content(text):
@@ -229,13 +249,22 @@ class Orchestrator:
             # command in this same turn, falling through below.
 
         self.messages.append({"role": "user", "content": text})
-        try:
-            reply, self.messages = self.brain.respond(self.messages, registry, confirm=self._voice_confirm)
-        except Exception as exc:  # e.g. a model call timing out - must not end the listening loop
-            issue_log.log_issue(user_said=text, tool_name=None, error=f"brain.respond failed: {exc!r}", kind="respond_crash")
-            reply = "Sorry, that took too long or went wrong - please try again."
+        self.brain.trace = []
+        error = None
+        with Timer() as brain_time:
+            try:
+                reply, self.messages = self.brain.respond(self.messages, registry, confirm=self._voice_confirm)
+            except Exception as exc:  # e.g. a model call timing out - must not end the listening loop
+                error = exc
+                issue_log.log_issue(user_said=text, tool_name=None, error=f"brain.respond failed: {exc!r}", kind="respond_crash")
+                interaction_log.log_error("brain.respond", exc, text=text)
+                reply = "Sorry, that took too long or went wrong - please try again."
+        self.messages = _trim_history(self.messages)
         print(f"Assistant: {reply}")
-        self._speak(reply)
+        with Timer() as speak_time:
+            self._speak(reply)
+        interaction_log.log_event("turn", text=text, reply=reply, trace=self.brain.trace, brain_ms=brain_time.ms,
+                                  speak_ms=speak_time.ms, stt_ms=stt_time.ms, failed=error is not None)
 
     def run_forever(self) -> None:
         if self.continuous:
@@ -250,11 +279,31 @@ class Orchestrator:
                 "then say 'Vaayu' (e.g. 'Vaayu, open brave') to wake it and run a command in one go "
                 "(Ctrl+C to force quit)."
             )
+        interaction_log.log_event("start", model=self.config.llm.model, mode=self.config.activation.mode)
         try:
             while not self.should_exit:
-                self.handle_one_turn()
+                try:
+                    self.handle_one_turn()
+                except KeyboardInterrupt:
+                    raise
+                except Exception as exc:
+                    # Any other error used to end this thread while the orb
+                    # stayed up - Vaayu looked alive but was deaf. Log, go on.
+                    interaction_log.log_error("handle_one_turn", exc, state=self.state.value)
+                    print(f"Vaayu: internal error, still listening - {exc!r}")
         except KeyboardInterrupt:
             print("\nGoodbye.")
         finally:
+            interaction_log.log_event("stop", should_exit=self.should_exit)
             if self.continuous:
                 self.listener.stop()
+
+
+def _trim_history(messages: list[dict]) -> list[dict]:
+    """System prompt + the last _HISTORY_USER_TURNS user turns (each with
+    whatever assistant/tool messages followed it)."""
+    system = [m for m in messages[:1] if m.get("role") == "system"]
+    user_idx = [i for i, m in enumerate(messages) if m.get("role") == "user"]
+    if len(user_idx) <= _HISTORY_USER_TURNS:
+        return messages
+    return system + messages[user_idx[-_HISTORY_USER_TURNS]:]

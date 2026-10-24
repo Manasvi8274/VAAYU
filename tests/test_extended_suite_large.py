@@ -239,8 +239,10 @@ _APP_NAMES = [
 ]
 
 
-@pytest.mark.parametrize("app_name", _APP_NAMES)
+@pytest.mark.parametrize("app_name", [a for a in _APP_NAMES if a not in ("chrome", "brave", "edge")])
 def test_open_app_across_many_names(app_name):
+    # Chromium browsers bypass AppOpener (launched with the DevTools port) -
+    # covered in test_apps_tools.py.
     # output=True is deliberate (see apps.py) - AppOpener's own throw_error
     # only fires when output is also truthy, so output=False used to
     # silently disable error detection entirely. "vlc" specifically goes
