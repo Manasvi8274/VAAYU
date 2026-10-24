@@ -125,7 +125,7 @@ def learn(client, model: str, user_text: str, reply: str) -> int:
                   {"role": "user", "content": f"USER said: {user_text}\nAssistant replied: {reply}"}],
         keep_alive=_KEEP_ALIVE,
         think=_THINK,
-        options={"num_ctx": 2048, "num_predict": 120},
+        options={"num_ctx": 2048, "num_predict": 120, "temperature": 0.2},
     )
     return add_facts(_parse(response["message"].get("content", "")))
 

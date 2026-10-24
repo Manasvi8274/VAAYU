@@ -88,6 +88,10 @@ _THINK = False
 # reproducible on retry - sampling randomness or an Ollama stall). No call
 # may block Vaayu forever: cap reply length, and time out the HTTP call.
 _MAX_REPLY_TOKENS = 300
+# models/Modelfile samples at temperature 1.5 - far too random for picking tools
+# and arguments. Commands run near-deterministic; chat keeps some warmth.
+_TOOL_TEMPERATURE = 0.2
+_CHAT_TEMPERATURE = 0.7
 _CALL_TIMEOUT_SECONDS = 60
 
 # Weak local models occasionally answer an action request in plain text
@@ -226,7 +230,7 @@ class OllamaBrain:
             ],
             keep_alive=_KEEP_ALIVE,
             think=_THINK,
-            options={"num_ctx": 2048, "num_predict": _MAX_REPLY_TOKENS},
+            options={"num_ctx": 2048, "num_predict": _MAX_REPLY_TOKENS, "temperature": _TOOL_TEMPERATURE},
         )
         return _sanitize_reply(response["message"].get("content", ""))
 
@@ -262,7 +266,7 @@ class OllamaBrain:
             messages=[{"role": "system", "content": system}, *history, {"role": "user", "content": user_text}],
             keep_alive=_KEEP_ALIVE,
             think=_THINK,
-            options={"num_ctx": 4096, "num_predict": 200},
+            options={"num_ctx": 4096, "num_predict": 200, "temperature": _CHAT_TEMPERATURE},
         )
         reply = _sanitize_reply(response["message"].get("content", ""), max_sentences=4)
         return reply, messages + [{"role": "assistant", "content": reply}]
@@ -355,7 +359,7 @@ class OllamaBrain:
                 tools=tool_registry.get_ollama_tools(),
                 keep_alive=_KEEP_ALIVE,
                 think=_THINK,
-                options={"num_ctx": _NUM_CTX, "num_predict": _MAX_REPLY_TOKENS},
+                options={"num_ctx": _NUM_CTX, "num_predict": _MAX_REPLY_TOKENS, "temperature": _TOOL_TEMPERATURE},
             )
             assistant_msg = response["message"]
             messages = messages + [assistant_msg]
@@ -445,7 +449,7 @@ class OllamaBrain:
             messages=messages,
             keep_alive=_KEEP_ALIVE,
             think=_THINK,
-            options={"num_ctx": _NUM_CTX, "num_predict": _MAX_REPLY_TOKENS},
+            options={"num_ctx": _NUM_CTX, "num_predict": _MAX_REPLY_TOKENS, "temperature": _TOOL_TEMPERATURE},
         )
         final_msg = final_response["message"]
         messages = messages + [final_msg]
