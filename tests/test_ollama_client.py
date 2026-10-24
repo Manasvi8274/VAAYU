@@ -17,7 +17,7 @@ from assistant.tools.registry import ToolRegistry
 @pytest.fixture
 def brain():
     with patch("assistant.llm.ollama_client.ollama.Client"):
-        b = OllamaBrain(host="http://fake", model="fake-model")
+        b = OllamaBrain(host="http://fake", model="fake-model", fast_paths=False)
     b.client = MagicMock()
     return b
 
@@ -433,3 +433,22 @@ def test_respond_returns_fallback_when_model_hallucinates_fake_tool_call_after_n
 
     assert reply == _NO_TOOL_FALLBACK
     assert brain.client.chat.call_count == 2  # bounded - no infinite retry loop
+
+
+def test_identical_retry_of_a_failed_call_ends_the_turn(brain, failing_registry):
+    # issues_log.jsonl: switch_to_window('Brave') re-issued 5x after failing,
+    # ~15-20s of silence. One identical retry allowed, the 2nd ends the turn.
+    same_call = {"function": {"name": "close_app", "arguments": {"app_name": "brave"}}}
+    brain.client.chat.side_effect = [{"message": _msg(tool_calls=[same_call])}] * 5
+
+    with patch("assistant.llm.ollama_client.issue_log.log_issue"):
+        reply, _ = brain.respond([{"role": "user", "content": "close brave"}], failing_registry)
+
+    assert reply == "That didn't work - brave not found"
+    assert brain.client.chat.call_count == 3
+
+
+def test_think_is_disabled_on_every_chat_call(brain, registry):
+    brain.client.chat.return_value = {"message": _msg("hi")}
+    brain.respond([{"role": "user", "content": "how are you"}], registry)
+    assert brain.client.chat.call_args.kwargs["think"] is False

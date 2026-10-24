@@ -173,3 +173,10 @@ def test_control_media_sends_correct_key_for_each_action():
 def test_control_media_rejects_unknown_action():
     with pytest.raises(ValueError, match="Unknown media action"):
         media.control_media("skip_to_the_end")
+
+
+@pytest.mark.parametrize("alias", ["pause", "play", "resume", "stop"])
+def test_control_media_maps_spoken_aliases_to_play_pause(alias):
+    with patch("assistant.tools.media.keyboard") as kb:
+        media.control_media(alias)
+    kb.send.assert_called_once_with("play/pause media")

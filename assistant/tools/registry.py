@@ -83,14 +83,27 @@ class ToolRegistry:
         # Local models occasionally hallucinate arguments that aren't in the
         # declared schema — drop anything the tool doesn't actually accept
         # rather than letting an unexpected kwarg crash the call.
-        allowed = spec.parameters.get("properties", {}).keys()
-        filtered_arguments = {k: v for k, v in arguments.items() if k in allowed}
+        filtered_arguments = repair_arguments(spec, arguments)
 
         try:
             result = spec.func(**filtered_arguments)
             return {"ok": True, "result": result}
         except Exception as exc:  # tool failures shouldn't crash the assistant
             return {"ok": False, "error": str(exc)}
+
+
+def repair_arguments(spec: ToolSpec, arguments: dict[str, Any]) -> dict[str, Any]:
+    """Drops arguments the tool doesn't accept - but first, when exactly one
+    required argument is missing and exactly one unknown one was given,
+    treats it as a misnamed version of the missing one. Benchmark: the model
+    sent open_website(url=...) / read_file(file=...) for url_or_query/path."""
+    allowed = spec.parameters.get("properties", {})
+    unknown = [k for k in arguments if k not in allowed]
+    missing = [k for k in spec.parameters.get("required", []) if k not in arguments]
+    fixed = {k: v for k, v in arguments.items() if k in allowed}
+    if len(missing) == 1 and len(unknown) == 1:
+        fixed[missing[0]] = arguments[unknown[0]]
+    return fixed
 
 
 # Single shared registry instance, imported by orchestrator.py and each tool module.

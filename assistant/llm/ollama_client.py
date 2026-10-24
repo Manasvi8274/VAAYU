@@ -16,6 +16,7 @@ from typing import Callable
 
 import ollama
 
+from assistant.llm import router
 from assistant.self_review import issue_log
 from assistant.tools.registry import ToolRegistry
 
@@ -71,6 +72,11 @@ _KEEP_ALIVE = -1
 # headroom; not set arbitrarily high since a larger context window also
 # costs more compute per call on this CPU-only setup.
 _NUM_CTX = 8192
+
+# Qwen3.5 reasons in a <think> block before every reply by default - several
+# seconds of dead air per step in a voice assistant. Qwen3.5 dropped Qwen3's
+# /no_think prompt switch, so this must go through Ollama's own `think` field.
+_THINK = False
 
 # Weak local models occasionally answer an action request in plain text
 # ("Brave is now closed") without ever actually calling the tool that would
@@ -129,9 +135,29 @@ def _sanitize_reply(text: str) -> str:
 
 
 class OllamaBrain:
-    def __init__(self, host: str, model: str):
+    def __init__(self, host: str, model: str, fast_paths: bool = True):
         self.client = ollama.Client(host=host)
         self.model = model
+        # router.py's fast route / tool subset / direct replies. False keeps
+        # the plain every-tool LLM loop (the old behavior, used as the
+        # benchmark baseline and by the LLM-loop unit tests).
+        self.fast_paths = fast_paths
+
+    def _phrase_result(self, user_text: str, name: str, result) -> str:
+        """One small, tool-free LLM call that turns a data result (wifi
+        details, mic level...) into a spoken sentence."""
+        response = self.client.chat(
+            model=self.model,
+            messages=[
+                {"role": "system", "content": "Answer the user's question in one or two short spoken sentences "
+                                              "using only this tool result. No markdown."},
+                {"role": "user", "content": f"Question: {user_text}\nResult of {name}: {result}"},
+            ],
+            keep_alive=_KEEP_ALIVE,
+            think=_THINK,
+            options={"num_ctx": 2048},
+        )
+        return _sanitize_reply(response["message"].get("content", ""))
 
     def respond(
         self,
@@ -156,11 +182,43 @@ class OllamaBrain:
         # the model correctly saying "okay, not sending that" is the wanted
         # behavior there, not something to override.
         last_action_failed = False
+        # Found in data/issues_log.jsonl: after a failure the model re-issued
+        # the exact same failing call (switch_to_window 'Brave' 5x,
+        # control_media 'pause' 5x), burning every step at ~3-4s each -
+        # ~15-20s of silence for one command. One identical retry is kept
+        # (transient failures do recover - see the flaky-close test), a
+        # second one ends the turn with the real failure instead.
+        last_failed_call = None
+        identical_retries = 0
         last_user_text = ""
         for m in reversed(messages):
             if m.get("role") == "user":
                 last_user_text = m.get("content", "")
                 break
+
+        if self.fast_paths:
+            routed = router.fast_route(last_user_text)
+            if routed and routed[0] == "reply":
+                return routed[1], messages + [{"role": "assistant", "content": routed[1]}]
+            if routed and all(name in tool_registry._tools for name, _args in routed[1]):
+                replies = []
+                for name, arguments in routed[1]:  # multi-step: in order, stop at the first failure
+                    if tool_registry.requires_confirmation(name) and not confirm(name, arguments):
+                        replies.append("Okay, I won't do that.")
+                        break
+                    tool_result = tool_registry.dispatch(name, arguments)
+                    if not tool_result.get("ok"):
+                        error_text = str(tool_result.get("error", "something went wrong"))
+                        issue_log.log_issue(user_said=last_user_text, tool_name=name, error=error_text)
+                        replies.append(f"That didn't work - {error_text}")
+                        break
+                    replies.append(
+                        router.format_result(name, tool_result.get("result"))
+                        or self._phrase_result(last_user_text, name, tool_result.get("result"))
+                    )
+                reply = " ".join(replies)
+                return reply, messages + [{"role": "assistant", "content": reply}]
+            tool_registry = router.select_tools(last_user_text, tool_registry)
 
         for _step in range(_MAX_TOOL_STEPS):
             response = self.client.chat(
@@ -168,6 +226,7 @@ class OllamaBrain:
                 messages=messages,
                 tools=tool_registry.get_ollama_tools(),
                 keep_alive=_KEEP_ALIVE,
+                think=_THINK,
                 options={"num_ctx": _NUM_CTX},
             )
             assistant_msg = response["message"]
@@ -206,6 +265,11 @@ class OllamaBrain:
             name = call["function"]["name"]
             arguments = call["function"].get("arguments") or {}
 
+            if last_action_failed and (name, arguments) == last_failed_call:
+                identical_retries += 1
+                if identical_retries > 1:
+                    return last_failure_reply, messages
+
             if tool_registry.requires_confirmation(name) and not confirm(name, arguments):
                 tool_result = {"ok": False, "error": "User declined to confirm this action."}
                 last_action_failed = False  # declining is a normal outcome, not a failure to correct
@@ -217,6 +281,7 @@ class OllamaBrain:
                     # confirmation (that's expected behavior, not a bug).
                     error_text = str(tool_result.get("error", "something went wrong"))
                     last_failure_reply = f"That didn't work - {error_text}"
+                    last_failed_call = (name, arguments)
                     issue_log.log_issue(
                         user_said=last_user_text,
                         tool_name=name,
@@ -224,6 +289,10 @@ class OllamaBrain:
                     )
 
             messages = messages + [{"role": "tool", "content": str(tool_result), "name": name}]
+            if self.fast_paths and tool_result.get("ok") and name in router.DIRECT_REPLY_TOOLS:
+                reply = router.format_result(name, tool_result.get("result"))
+                if reply:
+                    return reply, messages + [{"role": "assistant", "content": reply}]
             # loop back: the model sees the tool result and decides whether
             # to call another tool or give a final reply
 
@@ -231,7 +300,11 @@ class OllamaBrain:
         # with tools withheld, so the model must summarize instead of
         # attempting yet another action.
         final_response = self.client.chat(
-            model=self.model, messages=messages, keep_alive=_KEEP_ALIVE, options={"num_ctx": _NUM_CTX}
+            model=self.model,
+            messages=messages,
+            keep_alive=_KEEP_ALIVE,
+            think=_THINK,
+            options={"num_ctx": _NUM_CTX},
         )
         final_msg = final_response["message"]
         messages = messages + [final_msg]
