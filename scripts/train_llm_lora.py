@@ -262,10 +262,68 @@ def export(adapter=None):
           f"{MODELS / 'Modelfile.distilled'}")
 
 
+def merge(adapter=None):
+    """Ollama 0.40 refuses ADAPTER ("LoRA adapters are no longer supported"), so bake the
+    adapter into the weights instead: W += (alpha/r) * B @ A, one tensor at a time (the
+    fp16 model never sits in RAM whole), then HF -> f16 GGUF -> `ollama create -q q4_K_M`."""
+    import shutil
+    import torch
+    from huggingface_hub import snapshot_download
+    from safetensors import safe_open
+    from safetensors.torch import save_file
+    adapter = Path(adapter) if adapter else RUN / "adapter"
+    cfg = json.loads((adapter / "adapter_config.json").read_text(encoding="utf-8"))
+    scale = cfg["lora_alpha"] / cfg["r"]
+    base_dir = Path(snapshot_download(BASE))
+    out_dir = RUN / "merged_hf"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    lora = {}
+    with safe_open(str(adapter / "adapter_model.safetensors"), "pt") as f:
+        for k in f.keys():  # base_model.model.<module>.lora_A.weight -> <module>.weight
+            mod, part = re.match(r"base_model\.model\.(.+)\.lora_([AB])\.weight", k).groups()
+            lora.setdefault(mod + ".weight", {})[part] = f.get_tensor(k).float()
+    merged, part, size, tensors, weight_map = 0, 0, 0, {}, {}
+
+    def flush():
+        nonlocal part, size, tensors
+        if tensors:
+            name = f"model-{part:05d}.safetensors"
+            save_file(tensors, str(out_dir / name), metadata={"format": "pt"})
+            weight_map.update({k: name for k in tensors})
+            part, size, tensors = part + 1, 0, {}
+
+    for shard in sorted(base_dir.glob("*.safetensors")):
+        with safe_open(str(shard), "pt") as f:
+            for k in f.keys():
+                t = f.get_tensor(k)
+                if k in lora:
+                    t = (t.float() + scale * (lora[k]["B"] @ lora[k]["A"])).to(t.dtype)
+                    merged += 1
+                tensors[k] = t
+                size += t.numel() * t.element_size()
+                if size > 1 << 30:  # ~1 GB files: RAM stays low next to other jobs
+                    flush()
+    flush()
+    for extra in base_dir.iterdir():
+        if not extra.name.endswith(".safetensors") and extra.name != "model.safetensors.index.json":
+            shutil.copy(extra, out_dir / extra.name)
+    (out_dir / "model.safetensors.index.json").write_text(json.dumps({"metadata": {}, "weight_map": weight_map}),
+                                                          encoding="utf-8")
+    assert merged == len(lora), f"merged {merged} of {len(lora)} LoRA tensors"
+    gguf = MODELS / "vaayu-distilled-f16.gguf"
+    subprocess.run([sys.executable, str(_llama_cpp() / "convert_hf_to_gguf.py"), str(out_dir), "--outtype", "f16",
+                    "--outfile", str(gguf)], check=True)
+    lines = (MODELS / "Modelfile").read_text(encoding="utf-8").splitlines()
+    lines = [f"FROM {gguf.name}" if line.startswith("FROM ") else line for line in lines]
+    (MODELS / "Modelfile.distilled").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print(f"merged {merged} tensors -> {gguf}\nnext:  ollama create vaayu-distilled -q q4_K_M -f "
+          f"{MODELS / 'Modelfile.distilled'}")
+
+
 if __name__ == "__main__":
     sys.stdout.reconfigure(encoding="utf-8")
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=["check", "train", "export"])
+    ap.add_argument("cmd", choices=["check", "train", "export", "merge"])
     ap.add_argument("--epochs", type=int, default=1)
     ap.add_argument("--max-len", type=int, default=1024, help="max trained tokens after the frozen prefix")
     ap.add_argument("--adapter", help="export: adapter folder (default data/llm_distill_run/adapter)")
@@ -275,5 +333,7 @@ if __name__ == "__main__":
         check()
     elif a.cmd == "train":
         train(epochs=a.epochs, max_len=a.max_len, cats=a.cats.split(",") if a.cats else None)
+    elif a.cmd == "merge":
+        merge(a.adapter)
     else:
         export(a.adapter)

@@ -256,7 +256,8 @@ class OllamaBrain:
             think=_THINK,
             options={"num_ctx": 2048, "num_predict": _MAX_REPLY_TOKENS, "temperature": _TOOL_TEMPERATURE},
         )
-        return _sanitize_reply(response["message"].get("content", ""))
+        reply = _sanitize_reply(response["message"].get("content", ""))
+        return _romanize(reply) if _DEVANAGARI.search(reply) else reply  # live: "Droupadi Murmu India ka 15वीं राष्ट्रपति"
 
     def _chat(self, messages: list[dict], user_text: str) -> tuple[str, list[dict]]:
         """Personal talk, opinions, advice: the big-brother persona, no tools,
