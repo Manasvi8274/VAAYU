@@ -401,7 +401,9 @@ class Orchestrator:
                 "then say 'Vaayu' (e.g. 'Vaayu, open brave') to wake it and run a command in one go "
                 "(Ctrl+C to force quit)."
             )
-        interaction_log.log_event("start", model=self.config.llm.model, mode=self.config.activation.mode)
+        interaction_log.log_event("start", model=self.config.llm.model, mode=self.config.activation.mode,
+                                  stt_model=self.config.stt.whisper_model_size,
+                                  stt_device=getattr(self.stt, "device", "?"))
         try:
             while not self.should_exit:
                 try:
