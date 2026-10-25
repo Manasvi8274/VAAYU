@@ -301,6 +301,25 @@ def _uac_watch(stop: threading.Event, vaayu_alive) -> None:
 
 # --- main loop ---------------------------------------------------------------------
 
+def _ensure_ollama() -> None:
+    """Vaayu's brain server. The Ollama tray app normally runs it; if it isn't up, start it here - its
+    models live in this folder (models/ollama, user's rule), so it's told where."""
+    import urllib.request
+    try:
+        urllib.request.urlopen("http://127.0.0.1:11434/api/version", timeout=2)
+        return
+    except OSError:
+        pass
+    exe = Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "Ollama" / "ollama.exe"
+    if not exe.exists():
+        log.warning("Ollama isn't running and %s isn't there - Vaayu will have no brain", exe)
+        return
+    subprocess.Popen([str(exe), "serve"], env=dict(os.environ, OLLAMA_MODELS=str(REPO / "models" / "ollama")),
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    log.info("started Ollama's server (models in %s)", REPO / "models" / "ollama")
+
+
 def run() -> None:
     DATA.mkdir(exist_ok=True)
     logging.basicConfig(filename=LOG_FILE, level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -310,6 +329,7 @@ def run() -> None:
         log.info("guardian already running (pid %d) - not starting a second one", other)
         return
     PID_FILE.write_text(str(os.getpid()))
+    _ensure_ollama()
 
     kill = threading.Event()
     reason = {}
