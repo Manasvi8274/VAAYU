@@ -164,6 +164,98 @@ def _proc_exe(p) -> str:
         return ""
 
 
+# --- what each open_app started, so close_app can close exactly that ---------------------------------
+# Closing by guessing a process name fails for many apps (Calculator runs as CalculatorApp.exe, a Steam
+# game as "TEKKEN 7.exe"...). Instead: the processes that appeared with a window right after the open.
+_OPENED: dict[str, set[int]] = {}
+_TRACK_SECONDS = 8.0   # how long after an open to look for its new windowed processes
+_CLOSE_WAIT = 5.0      # how long a polite close (like clicking X) gets before the next step
+
+
+def _pids() -> set[int]:
+    return set(psutil.pids())
+
+
+def _window_pids() -> set[int]:
+    import win32gui
+    import win32process
+    pids = set()
+
+    def add(hwnd, _):
+        if win32gui.IsWindowVisible(hwnd) and win32gui.GetWindowText(hwnd):
+            pids.add(win32process.GetWindowThreadProcessId(hwnd)[1])
+    win32gui.EnumWindows(add, None)
+    return pids
+
+
+def _track_opened(app_name: str, before: set[int]) -> None:
+    def run():
+        deadline, found = time.time() + _TRACK_SECONDS, set()
+        while time.time() < deadline:
+            time.sleep(0.5)
+            new = _pids() - before
+            windowed = new & _window_pids()
+            if windowed:
+                found |= windowed
+                for pid in list(windowed):  # with their child processes (helpers, renderers)
+                    try:
+                        found |= {c.pid for c in psutil.Process(pid).children(recursive=True)}
+                    except psutil.Error:
+                        pass
+        if found:
+            _OPENED[app_name.strip().lower()] = found
+    import threading
+    threading.Thread(target=run, daemon=True, name="track-open").start()
+
+
+def _opened_pids(app_name: str) -> set[int]:
+    key = app_name.strip().lower()
+    if key not in _OPENED:
+        from assistant.tools.names import sound_key
+        import difflib
+        match = max(_OPENED, key=lambda k: difflib.SequenceMatcher(None, sound_key(k), sound_key(key)).ratio(),
+                    default=None)
+        if not match or difflib.SequenceMatcher(None, sound_key(match), sound_key(key)).ratio() < 0.8:
+            return set()
+        key = match
+    alive = {p for p in _OPENED[key] if psutil.pid_exists(p)}
+    if not alive:
+        _OPENED.pop(key, None)
+    return alive
+
+
+def _close_tracked(app_name: str, pids: set[int]) -> str:
+    """Close politely (WM_CLOSE, like clicking X); a window still asking about unsaved changes is left
+    for the user (their rule: ask before saving); windowless leftovers are ended."""
+    import win32con
+    import win32gui
+    import win32process
+
+    def windows():
+        found = []
+
+        def add(hwnd, _):
+            if win32gui.IsWindowVisible(hwnd) and win32process.GetWindowThreadProcessId(hwnd)[1] in pids:
+                found.append(hwnd)
+        win32gui.EnumWindows(add, None)
+        return found
+    for hwnd in windows():
+        win32gui.PostMessage(hwnd, win32con.WM_CLOSE, 0, 0)
+    deadline = time.time() + _CLOSE_WAIT
+    while time.time() < deadline and any(psutil.pid_exists(p) for p in pids):
+        time.sleep(0.25)
+    left = [p for p in pids if psutil.pid_exists(p)]
+    if left and windows():
+        raise RuntimeError(f"{app_name} is still open - it may be asking you to save something.")
+    for pid in left:  # no window left (a UWP app's own process, helpers): end it
+        try:
+            psutil.Process(pid).terminate()
+        except psutil.Error:
+            pass
+    _OPENED.pop(app_name.strip().lower(), None)
+    return f"Closed {app_name}."
+
+
 _START_APPS_CACHE: tuple[float, dict[str, str]] | None = None
 _START_APPS_MAX_AGE = 600  # re-read after 10 minutes, so a freshly installed app shows up
 
@@ -241,6 +333,7 @@ def open_app(app_name: str, foreground: bool = True) -> str:
     if browser_reply:
         return browser_reply
     resolved_name = _resolve_open_app_name(app_name)
+    before = _pids()
     try:
         with _quiet_stdout():
             app_open(resolved_name, match_closest=True, output=True, throw_error=True)
@@ -249,6 +342,7 @@ def open_app(app_name: str, foreground: bool = True) -> str:
         # (installed later) failed with its "TEKKEN 7 is not running" (= not found).
         if not _open_from_start_menu(app_name):
             raise RuntimeError(f"I couldn't find an app called {app_name} on this laptop.") from exc
+    _track_opened(app_name, before)
     browser_state.note_app_opened(app_name)
     if foreground:
         foreground_by_title(app_name)
@@ -283,6 +377,9 @@ def open_app(app_name: str, foreground: bool = True) -> str:
     },
 )
 def close_app(app_name: str) -> str:
+    tracked = _opened_pids(app_name)
+    if tracked:  # an app Vaayu opened: close exactly the programs it started
+        return _close_tracked(app_name, tracked)
     # No alias resolution here, deliberately - see _OPEN_APP_NAME_ALIASES'
     # docstring, close_things() matches real running process names, not
     # the registered-app-name database open_things() uses, so "vlc" alone
