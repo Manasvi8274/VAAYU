@@ -57,7 +57,8 @@ def _now() -> str:
 def _sha(files: list[Path]) -> str:
     h = hashlib.sha256()
     for f in sorted(files):
-        h.update(f.relative_to(REPO).as_posix().encode() + b"\0" + f.read_bytes())
+        # line endings ignored: git may rewrite LF as CRLF on a checkout - the same code, not a new upgrade
+        h.update(f.relative_to(REPO).as_posix().encode() + b"\0" + f.read_bytes().replace(b"\r\n", b"\n"))
     return h.hexdigest()
 
 
