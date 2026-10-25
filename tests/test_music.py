@@ -168,3 +168,28 @@ def test_the_model_choosing_youtube_for_a_song_is_rerouted_to_the_speakers(monke
                              registry, confirm=lambda n, a: True)
     assert played == ["bank bike movie song rintik roshan"]
     assert any("rerouted" in t for t in brain.trace)
+
+
+def test_song_pauses_while_vaayu_talks_and_resumes_after_the_conversation(playing, monkeypatch):
+    import time
+    monkeypatch.setattr(music, "_CONVERSATION_GAP", 0.3)
+    music.hold_for_speech()  # Vaayu starts a reply
+    assert playing.paused.is_set()
+    music.release_after_conversation()  # reply done...
+    music.user_is_speaking()  # ...but the user says something else: still paused
+    time.sleep(0.6)
+    assert playing.paused.is_set()
+    music.hold_for_speech()
+    music.release_after_conversation()  # this time the conversation goes quiet
+    time.sleep(0.8)
+    assert not playing.paused.is_set()
+
+
+def test_a_song_the_user_paused_stays_paused_after_vaayu_talks(playing, monkeypatch):
+    import time
+    monkeypatch.setattr(music, "_CONVERSATION_GAP", 0.2)
+    music.control("pause")  # "pause the song"
+    music.hold_for_speech()  # "Paused the song."
+    music.release_after_conversation()
+    time.sleep(0.6)
+    assert playing.paused.is_set()

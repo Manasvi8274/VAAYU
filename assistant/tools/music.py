@@ -132,6 +132,46 @@ class _Player:
 
 player = _Player()
 
+# Vaayu or the song, never both (user's rule, 2026-10-25): the song pauses while Vaayu talks and comes back
+# by itself once the conversation is over - unless the user paused or stopped it themselves meanwhile.
+_CONVERSATION_GAP = 6.0  # calibration knob: seconds of quiet after Vaayu's last reply = conversation over
+_held = threading.Event()  # the song is paused BECAUSE Vaayu is talking (not by the user)
+_resume_at = 0.0
+
+
+def hold_for_speech() -> None:
+    global _resume_at
+    _resume_at = 0.0
+    if player.active and not player.paused.is_set():
+        player.paused.set()
+        _held.set()
+
+
+def release_after_conversation() -> None:
+    """Called when Vaayu finishes a reply: resume the held song if nobody speaks again for a few seconds."""
+    global _resume_at
+    if _held.is_set():
+        _resume_at = time.time() + _CONVERSATION_GAP
+
+
+def user_is_speaking() -> None:
+    """The user started another sentence - the conversation goes on, the song stays paused."""
+    global _resume_at
+    if _held.is_set():
+        _resume_at = 0.0
+
+
+def _resume_watch() -> None:
+    while True:
+        time.sleep(0.25)
+        if _held.is_set() and _resume_at and time.time() >= _resume_at:
+            _held.clear()
+            if player.active:
+                player.paused.clear()
+
+
+threading.Thread(target=_resume_watch, daemon=True, name="music-resume").start()
+
 
 def _resume_fresh(track: dict, at: float) -> None:
     try:
@@ -263,6 +303,10 @@ def control(action: str, level: int | None = None) -> str:
     """Pause/resume/stop/next/volume/seek for the song this player is playing."""
     if not player.track and action != "stop":
         raise RuntimeError("No song is playing.")
+    if action in ("pause", "play_pause", "stop", "play", "resume", "next") or action.startswith("seek"):
+        _held.clear()  # the user decided - Vaayu's own pause-while-talking no longer applies
+        if action not in ("pause", "stop"):
+            player.paused.clear()  # (a held song counts as playing for "resume"/"next"/"skip to")
     if action in ("pause", "play_pause") and not player.paused.is_set():
         player.paused.set()
         return "Paused the song."

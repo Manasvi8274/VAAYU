@@ -115,18 +115,42 @@ def _find_first_video_url(tab: dict, exclude_shorts: bool = True) -> str | None:
     # between page layouts (search results vs. channel page vs. videos tab)
     # in ways that made tag-based selectors unreliable; a plain watch-URL
     # href match works consistently across all of them.
+    # Ads are skipped and only the video id is kept: found live, the first result's link carried a
+    # redirect (&pp=...) and ~4 s after "Playing" YouTube switched to the real video, undoing a pause.
     js = """
     (() => {
         const els = Array.from(document.querySelectorAll("a[href*='/watch?v=']"))
-            .filter(el => el.offsetParent !== null);
+            .filter(el => el.offsetParent !== null && !el.closest(
+                'ytd-ad-slot-renderer, ytd-in-feed-ad-layout-renderer, ytd-promoted-video-renderer, ytd-promoted-sparkles-web-renderer'));
         for (const el of els) {
             if (%s && el.href.includes('/shorts/')) continue;
-            if (el.href) return el.href;
+            const id = new URL(el.href).searchParams.get('v');
+            if (id) return 'https://www.youtube.com/watch?v=' + id;
         }
         return null;
     })()
     """ % ("true" if exclude_shorts else "false")
     return _eval_js_retry_if_empty(js, tab)
+
+
+def _wait_until_playing(video_url: str, tab: dict, timeout: float = 10.0) -> None:
+    """Only report "Playing" once YouTube's player is really playing THIS video."""
+    from urllib.parse import parse_qs, urlparse
+    from assistant.tools import youtube_player as yp
+    want = parse_qs(urlparse(video_url).query).get("v", [""])[0]
+    js = (f"(() => {{ const p = {yp._P}; if (!p || !p.getVideoData) return null; "
+          f"return [p.getVideoData().video_id, p.getPlayerState()]; }})()")
+    # Found live: with Brave behind other windows the page stays "hidden" and the player only buffers (3);
+    # a pause then is undone the moment the window shows. Bring it to the front and wait for real playing (1).
+    try:
+        from assistant.tools.window_utils import foreground_by_title
+        foreground_by_title("brave")
+    except Exception:
+        pass
+    try:
+        yp._until(tab, js, lambda v: bool(v) and v[0] == want and v[1] == 1, timeout=timeout, every=0.3)
+    except Exception:
+        pass  # can't read the player (a page that isn't YouTube's, a test double) - the navigation itself succeeded
 
 
 @registry.register(
@@ -193,6 +217,7 @@ def play_latest_video_from_channel(channel_name: str, new_tab: bool = False) -> 
         cache.set(_CHANNEL_CACHE_NAMESPACE, channel_name, channel_url)
 
     _navigate(video_url, tab)
+    _wait_until_playing(video_url, tab)
     _remember(tab)
     return f"Playing the latest video from {channel_name}" + (" in a new tab." if new_tab else ".")
 
@@ -235,5 +260,6 @@ def play_video_on_youtube(query: str, new_tab: bool = False) -> str:
         raise ValueError(f"No video found on YouTube for '{query}'.")
 
     _navigate(video_url, tab)
+    _wait_until_playing(video_url, tab)
     _remember(tab)
     return f"Playing on YouTube: {query}" + (" (new tab)." if new_tab else "") + note

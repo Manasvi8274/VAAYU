@@ -264,3 +264,12 @@ def _no_real_browser_takeover():
         mp.setattr(apps, "_real_ensure_browser", apps.ensure_browser, raising=False)
         mp.setattr(apps, "ensure_browser", lambda app_name="brave": "")
         yield
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _no_waiting_for_a_real_player():
+    # play_video_on_youtube waits (up to 10 s) for YouTube's player to really be playing - tests have none.
+    from assistant.tools import youtube
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(youtube, "_wait_until_playing", lambda video_url, tab, timeout=10.0: None)
+        yield

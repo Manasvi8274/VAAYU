@@ -24,6 +24,8 @@ from assistant.tools.video_player import _dispatch_key, _eval_js_on_tab
 _P = "document.getElementById('movie_player')"
 # getPlayerState(): -1 unstarted, 0 ended, 1 playing, 2 paused, 3 buffering, 5 cued
 _PLAYING_STATES = (1, 3)
+_PAUSE_WINDOW_SECONDS = 8   # keep re-pausing a just-loaded video for up to this long
+_PAUSE_STABLE_SECONDS = 0.5  # ...until it has stayed paused this long
 _QUALITY = {"144p": "tiny", "240p": "small", "360p": "medium", "480p": "large", "720p": "hd720",
             "1080p": "hd1080", "1440p": "hd1440", "2160p": "hd2160", "4k": "hd2160", "auto": "auto"}
 
@@ -123,12 +125,25 @@ def pause(tab=None) -> str:
     _require_player(tab)
     if not is_playing(tab):
         return "It's already paused."
-    _ev(tab, f"{_P}.pauseVideo()")
-    if _until(tab, f"{_P}.getPlayerState()", lambda s: s == 2) != 2:
-        # Found live: once in ~40 commands pauseVideo() didn't take (buffering) - YouTube's own 'k' key does.
+    # Found live: right after a video loads, YouTube's own autoplay overrides the first pauseVideo() (it
+    # paused on the 2nd try) - so pause, check it STAYS paused, and repeat a few times.
+    # Found live: for its first few seconds a just-loaded video keeps restarting itself (autoplay), so a
+    # single pause "took" and was undone a moment later. Keep it paused until it STAYS paused.
+    deadline, paused_since = time.time() + _PAUSE_WINDOW_SECONDS, None
+    while time.time() < deadline:
+        if _state(tab) == 2:
+            paused_since = paused_since or time.time()
+            if time.time() - paused_since >= _PAUSE_STABLE_SECONDS:
+                return "Paused."
+        else:
+            paused_since = None
+            _ev(tab, f"{_P}.pauseVideo(); document.querySelectorAll('video').forEach(v => v.pause())")
+        time.sleep(0.15)
+    # Found live: once in ~40 commands pauseVideo() didn't take (buffering) - YouTube's own 'k' key does.
+    if is_playing(tab):
         _dispatch_key(tab, key="k", code="KeyK", vk=75)
-        if _until(tab, f"{_P}.getPlayerState()", lambda s: s == 2) != 2:
-            raise RuntimeError("I tried to pause the video, but it's still playing.")
+    if _until(tab, f"{_P}.getPlayerState()", lambda s: s == 2) != 2:
+        raise RuntimeError("I tried to pause the video, but it's still playing.")
     return "Paused."
 
 

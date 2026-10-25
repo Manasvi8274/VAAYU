@@ -273,7 +273,7 @@ class Orchestrator:
         if _monitor is not None:
             _monitor.suppress_until = float("inf")  # Vaayu's own voice isn't "media"
         from assistant.tools import music
-        music.player.duck = _MUSIC_DUCK  # a song Vaayu is playing goes quiet while he talks
+        music.hold_for_speech()  # Vaayu or the song, never both - the song waits while he talks
         try:
             if self.gui_queue is not None:
                 self.tts.speak_with_amplitude(
@@ -286,7 +286,7 @@ class Orchestrator:
             else:
                 self.tts.speak(text)
         finally:
-            music.player.duck = 1.0
+            music.release_after_conversation()  # ...and comes back once the conversation goes quiet
             if barge:
                 barge.close()
             if _monitor is not None:
@@ -374,6 +374,8 @@ class Orchestrator:
         audio = self._capture_utterance()
         if len(audio) == 0:
             return
+        from assistant.tools import music
+        music.user_is_speaking()  # the conversation goes on: a held song stays paused
         self._busy = True
         try:
             self._handle_utterance(audio)
