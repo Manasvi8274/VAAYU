@@ -281,3 +281,10 @@ def _isolated_weather_place(tmp_path_factory):
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(web_answer, "PLACE_FILE", tmp_path_factory.mktemp("weather") / "weather_place.txt")
         yield
+
+
+@pytest.fixture(autouse=True)
+def _forget_weather_place():
+    # The remembered city must not leak from one test into the next (cheap: one unlink per test).
+    from assistant.tools import web_answer
+    web_answer.PLACE_FILE.unlink(missing_ok=True)
