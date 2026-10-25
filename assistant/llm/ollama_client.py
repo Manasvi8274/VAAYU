@@ -136,6 +136,7 @@ _TOOL_TOPIC = re.compile(r"\b(?:battery|charg\w*|wi-?fi|internet|bluetooth|awaa?
                          r"spreadsheet|documents?|pdf|excel|firefox|auto|quality|\d+p)\b", re.I)
 _PERSONAL = re.compile(r"\b(?:i|i'm|im|i've|i'd|my|me|myself|mujhe|mujhko|mera|meri|mere|main|mai|hum|life|feel|"
                        r"feeling|bhai|tum|tu|aap|you think|advice|opinion)\b", re.I)
+_HINDI_WORDS = re.compile(r"\b(?:hai|hain|kya|aap|aapko|ko|ka|ki|ke|mein|nahi|karo|kar|hum|apna|fir|phir|yeh|ye|toh|bhi|kuch|kaise|accha|achha|raha|rahi|karne|karna|hoga|hogi|wala|sakte|sakta)\b", re.I)
 _DEVANAGARI = re.compile(r"[ऀ-ॿ]")
 # Few-shot turns: told only in words, the 3B model answered Hinglish in Devanagari. Its Roman
 # Hinglish was tested too (and after training on Claude-written Hinglish): fluent-sounding but
@@ -320,12 +321,13 @@ class OllamaBrain:
                 options={"num_ctx": 4096, "num_predict": 200, "temperature": _CHAT_TEMPERATURE if attempt == 0 else 0.3},
             )
             reply = _sanitize_reply(response["message"].get("content", ""), max_sentences=4)
-            if not _DEVANAGARI.search(reply):
+            if not _DEVANAGARI.search(reply) and len(_HINDI_WORDS.findall(reply)) < 3:
                 break
-            # Live: the 3B model answered Hinglish in Devanagari, which the English voice can't speak.
-            self.trace.append({"path": "chat", "devanagari_retry": True})
-            convo = convo + [{"role": "system", "content": "Write the reply again in Hinglish using ONLY English "
-                                                           "(Roman) letters, like: 'Bhai, tension mat le.'"}]
+            # Live: the 3B model answered in Devanagari (the voice can't speak it), or in garbled Hinglish
+            # ("Bhai, kya aapko kisi problem hai ya update karne hai?") - replies are meant to be English.
+            self.trace.append({"path": "chat", "language_retry": True})
+            convo = convo + [{"role": "system", "content": "Write that reply again in clear, simple English only - "
+                                                           "you may start with 'Bhai,'."}]
         if _DEVANAGARI.search(reply):
             reply = _romanize(reply)
         return reply, messages + [{"role": "assistant", "content": reply}]

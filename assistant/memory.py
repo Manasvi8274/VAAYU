@@ -182,9 +182,29 @@ def learn(client, model: str, user_text: str, reply: str) -> int:
     return changed + add_facts(new)
 
 
+_LEARN_WHEN_QUIET_SECONDS = 30  # Ollama answers one call at a time: learning mid-conversation made the
+_LEARN_GIVE_UP_SECONDS = 900    # user's next reply wait (real log: 20-44 s turns). Learn once they pause.
+
+
+def _wait_until_quiet() -> bool:
+    import time
+    deadline = time.time() + _LEARN_GIVE_UP_SECONDS
+    while time.time() < deadline:
+        try:
+            quiet = time.time() - interaction_log.LOG_PATH.stat().st_mtime
+        except OSError:
+            quiet = _LEARN_WHEN_QUIET_SECONDS
+        if quiet >= _LEARN_WHEN_QUIET_SECONDS:
+            return True
+        time.sleep(5)
+    return False
+
+
 def learn_async(client, model: str, user_text: str, reply: str) -> threading.Thread:
     def run():
         try:
+            if not _wait_until_quiet():
+                return
             learn(client, model, user_text, reply)
         except Exception as exc:
             interaction_log.log_error("memory.learn", exc, text=user_text)

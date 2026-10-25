@@ -52,6 +52,7 @@ _ONE_WORD_COMMANDS = {"pause", "play", "resume", "stop", "mute", "unmute", "next
 # Approximate extra VRAM per model on the GPU (int8_float16, measured on the
 # GTX 1650 with the 3B brain loaded: small +348 MiB, large-v3-turbo +964 MiB).
 _GPU_MIB = {"tiny": 200, "base": 250, "small": 400, "medium": 900, "large-v3-turbo": 1000, "turbo": 1000}
+_MAX_TOKENS = 120  # per 30 s window (see transcribe)
 _GPU_MARGIN_MIB = 300  # left free for Windows/browser so the 4 GB card never overflows
 
 
@@ -142,6 +143,10 @@ class WhisperSTT:
             language=self.language,
             vad_filter=True,
             initial_prompt=_VOCAB_PROMPT,
+            # Real log: two utterances over loud music took 9 s each - Whisper looping on song lyrics.
+            # A spoken command or chat sentence is well under this many tokens per 30 s window.
+            max_new_tokens=_MAX_TOKENS,
+            condition_on_previous_text=False,
         )
         text = " ".join(segment.text.strip() for segment in segments).strip()
         if text.isupper() and len(text) > 12:  # the fine-tune's EdAcc labels are ALL CAPS - it picked that up

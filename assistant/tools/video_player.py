@@ -152,6 +152,10 @@ _TAB_HINT_PARAM = {
 def set_video_volume(
     direction: str | None = None, amount: int = 20, level: int | None = None, tab_hint: str | None = None
 ) -> str:
+    from assistant.tools import music
+    if not tab_hint and music.owns_controls():  # a song playing through the speakers, no video open
+        action = "volume_set" if level is not None else {"up": "volume_up", "down": "volume_down"}.get(direction, direction)
+        return music.control(action, level)
     tab = _resolve_video_tab(tab_hint)
     if _on_youtube(tab):  # YouTube keeps its own volume - see youtube_player.py
         from assistant.tools import youtube_player as yp
@@ -296,6 +300,9 @@ def set_video_fullscreen(fullscreen: bool, tab_hint: str | None = None) -> str:
     },
 )
 def seek_video(direction: str, seconds: int = 10, tab_hint: str | None = None) -> str:
+    from assistant.tools import music
+    if not tab_hint and music.owns_controls():
+        return music.control("seek_forward" if direction == "forward" else "seek_back", seconds)
     tab = _resolve_video_tab(tab_hint)
     if _on_youtube(tab):
         from assistant.tools import youtube_player as yp
@@ -354,6 +361,9 @@ def seek_video(direction: str, seconds: int = 10, tab_hint: str | None = None) -
     },
 )
 def control_video_playback(action: str, tab_hint: str | None = None) -> str:
+    from assistant.tools import music
+    if not tab_hint and music.owns_controls():  # real log: "pause the video" during a speaker song -> an error
+        return music.control({"toggle": "play_pause"}.get(action, action))
     tab = _resolve_video_tab(tab_hint)
     if _on_youtube(tab):
         from assistant.tools import youtube_player as yp

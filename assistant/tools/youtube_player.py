@@ -614,4 +614,7 @@ ACTIONS = {
 def youtube_control(action: str, value: str | None = None) -> str:
     if action not in ACTIONS:
         raise ValueError(f"Unknown YouTube action '{action}'.")
+    from assistant.tools import music
+    if action in music.FROM_VIDEO and music.owns_controls():  # "skip to 1:10" while a speaker song plays
+        return music.control(*music.FROM_VIDEO[action](value))
     return ACTIONS[action](value)

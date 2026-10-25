@@ -296,3 +296,19 @@ def test_every_model_call_gets_the_real_clock():
     out = _with_now([{"role": "system", "content": "base"}, {"role": "user", "content": "hi"}])
     assert out[0]["content"].startswith("base") and datetime.datetime.now().strftime("%A") in out[0]["content"]
     assert "The current time is" not in _sanitize_reply("The current time is [current time].")
+
+
+@pytest.mark.parametrize("text, after", [
+    ("Why you pause the audio.", "pause the audio."),  # real log: "Vaayu" heard as "why you" (5+ times)
+    ("Why you post the audio which you are playing.", "post the audio which you are playing."),
+    ("why you open whatsapp.", "open whatsapp."),
+])
+def test_why_you_before_a_command_is_vaayu(text, after):
+    from assistant.control_phrases import is_name_mentioned, text_after_name
+    assert is_name_mentioned(text) and text_after_name(text) == after
+
+
+@pytest.mark.parametrize("text", ["Why did you take too much time", "why you did that", "I want to know why you said that"])
+def test_real_why_you_questions_stay_questions(text):
+    from assistant.control_phrases import is_name_mentioned
+    assert not is_name_mentioned(text)

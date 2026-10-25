@@ -21,10 +21,17 @@ def _name_present(normalized: str) -> bool:
     # romanizations) since STT output for this word could not be reliably
     # validated in testing (see PLAN.md) - no reason to be stricter than
     # necessary about which one comes out.
-    return "vaayu" in normalized or "vayu" in normalized
+    return "vaayu" in normalized or "vayu" in normalized or bool(_MISHEARD_NAME.search(normalized))
 
 
-_NAME_WORD_RE = re.compile(r"\b(?:vaa?yu)\b[\s,.!?:;-]*", re.IGNORECASE)
+# Real log (2026-10-25): "Vaayu, pause the audio" came out as "Why you pause the audio" / "Why you post
+# the audio" / "Why you lower the volume" at least 5 times - and, the name missed, it was dropped as the
+# song's own audio. "why you" counts as the name only when a command follows it ("why you did that" doesn't).
+_COMMAND_AFTER = (r"(?=[\s,.!?]+(?:pause|post|pose|play|stop|resume|open|close|lower|reduce|increase|raise|turn|set|"
+                  r"change|mute|unmute|skip|next|start|search|send|show|tell|go|take|lock|volume|switch|put|bring)\b)")
+_MISHEARD_NAME = re.compile(r"\b(?:why|wai|vai|whai|bye) (?:you|u|yu)\b" + _COMMAND_AFTER, re.IGNORECASE)
+_NAME_WORD_RE = re.compile(r"(?:\b(?:vaa?yu)\b|\b(?:why|wai|vai|whai|bye) (?:you|u|yu)\b" + _COMMAND_AFTER +
+                           r")[\s,.!?:;-]*", re.IGNORECASE)
 
 
 def text_after_name(text: str) -> str:

@@ -67,3 +67,75 @@ def test_player_output_is_silent_while_paused_and_follows_volume():
     p.paused.set()
     p._callback(out, 1024, None, None)
     assert not out.any()
+
+
+@pytest.mark.parametrize("text, want", [
+    ("pause the audio", ("control_media", {"action": "pause"})),
+    ("post the audio which you are playing", ("control_media", {"action": "pause"})),  # real log: Whisper's "pause"
+    ("pause the song stop the song", ("control_media", {"action": "pause"})),  # real log: went to the LLM, 20 s
+    ("start the music", ("control_media", {"action": "play"})),  # real log: LLM claimed "Resuming..." with no tool
+    ("lower the reduce the audio volume to 10 percent", ("control_media", {"action": "volume_set", "level": 10})),
+    ("play kesariya for 15 seconds", ("play_music", {"query": "kesariya", "seconds": 15})),
+    ("play it for 10 seconds", ("music_control", {"action": "play_for", "level": 10})),
+    ("which movie is this song from", ("ask_about_song", {"question": "which movie is this song from"})),
+    ("ye gaana kis movie ka hai", ("ask_about_song", {"question": "ye gaana kis movie ka hai"})),
+    ("It wadya sa gaana chala do ya bollywood.", ("play_music", {"query": "bollywood songs"})),  # real log
+    ("switch your voice to a girl voice female voice", ("set_voice", {"voice": "heart"})),  # real log
+    ("change your own voice", ("set_voice", {"voice": "next"})),  # real log
+])
+def test_todays_log_phrasings(text, want):
+    assert router.fast_route(text) == ("tools", [want])
+
+
+@pytest.mark.parametrize("said, query", [
+    ("bang bang which is from the bollywood movie starring rithik roshan", "bang bang the hrithik roshan"),  # was a full movie
+    ("a new song by Eminem", "Eminem latest song"),  # was Kid Rock
+    ("the song named bang bang", "bang bang"),
+    ("koi romantic", "romantic"),
+    ("ek accha sa", ""),  # nothing left: their taste
+    ("kesariya", "kesariya"),
+])
+def test_spoken_filler_is_dropped_from_searches(said, query):
+    assert music._clean_query(said) == query
+
+
+def test_titles_spoken_without_upload_words():
+    assert music._spoken("Bang Bang Title Track Full Video | Hrithik") == "Bang Bang"
+
+
+def test_seek_and_timed_play(playing, monkeypatch):
+    seeks = []
+    monkeypatch.setattr(playing, "seek", lambda s: seeks.append(s) or setattr(playing, "start_at", s))
+    playing.track["duration"] = 247
+    assert music.control("seek_to", 70) == "Playing from 1:10."
+    music.control("seek_forward", 30)
+    assert seeks == [70, 100]
+    with pytest.raises(RuntimeError, match="only 4:07 long"):
+        music.control("seek_to", 300)
+    music.control("play_for", 15)
+    assert playing.stop_at == pytest.approx(playing.position + 15)
+
+
+def test_timed_play_pauses_at_the_mark():
+    import numpy as np
+    p = music._Player()
+    p._buf = np.ones((48000 * 3, 2), np.float32)
+    p.stop_at = 1.0
+    out = np.zeros((48000, 2), np.float32)
+    p._callback(out, 48000, None, None)
+    assert p.paused.is_set() and p.stop_at is None
+
+
+def test_video_commands_go_to_the_speaker_song_when_no_video_is_open(playing, monkeypatch):
+    from assistant.tools import video_player, youtube_player
+    monkeypatch.setattr(youtube_player, "youtube_tab", lambda require_watch=False: None)
+    assert video_player.control_video_playback("pause") == "Paused the song."  # real log: "can't control tabs"
+    monkeypatch.setattr(playing, "seek", lambda s: setattr(playing, "start_at", s))
+    assert youtube_player.youtube_control("seek_to", "70") == "Playing from 1:10."
+
+
+def test_this_song_question_uses_the_playing_title(playing, monkeypatch):
+    asked = []
+    monkeypatch.setattr("assistant.tools.web_answer.answer_question", lambda q: asked.append(q) or {"results": []})
+    music.ask_about_song("which movie is this song from")
+    assert asked == ['which movie is the song "Kesariya" from']

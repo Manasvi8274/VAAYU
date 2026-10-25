@@ -77,6 +77,10 @@ _MEDIA = [
      rf"(?:awaa?z|sound|volume) (?:wapas )?(?:chalu|on) {_KARO}", "unmute"),
 ]
 _MEDIA = [(re.compile(rf"^(?:{p})$", re.I), a) for p, a in _MEDIA]
+# Speaker-player audio (tools/music.py) in looser words; "post"/"pose" = how Whisper writes "pause".
+_AUDIO_CTRL = re.compile(r"^(?P<a>pause|post|pose|stop|hold|close|end|resume|start|continue|unpause)"
+                         r"(?: the| this| that| your| my)? (?:audio|song|music|gaana|track)\b.*$|"
+                         r"^(?:audio|song|music|gaana) (?P<a2>band|khatam)(?: karo| kar do)?$", re.I)
 
 # Well-known sites: "open youtube" means the website, not an installed app
 # (found live: open_app('youtube') -> "YOUTUBE is not running"). Desktop apps
@@ -525,7 +529,7 @@ def _route_one(t: str):
     for pattern, build in _YT_RULES:
         if m := pattern.match(t):
             return build(m)
-    if (_VOLUME_WORD.search(t) and len(t.split()) <= 8 and len(nums := _VOLUME_NUMBER.findall(t)) == 1
+    if (_VOLUME_WORD.search(t) and len(t.split()) <= 12 and len(nums := _VOLUME_NUMBER.findall(t)) == 1
             and not re.search(r"\b(?:seconds?|minutes?)\b", t, re.I)):
         level = min(int(nums[0]), 100)
         if re.search(r"\byoutube\b", t, re.I):  # named YouTube: YouTube, even while it's paused (found live)
@@ -536,6 +540,9 @@ def _route_one(t: str):
     # "Reduce it to 20 percent" (real log) - a volume change with no "volume" word in it.
     if m := _BARE_LEVEL.match(t):
         return ("tool", "control_media", {"action": "volume_set", "level": min(int(m.group("n")), 100)})
+    if m := _AUDIO_CTRL.match(t):  # real log: "post the audio which you are playing", "pause the song stop the song"
+        verb = (m.group("a") or m.group("a2")).lower()  # close/band = pause too: works for a YouTube song as well
+        return ("tool", "control_media", {"action": "play" if verb in ("resume", "start", "continue", "unpause") else "pause"})
     for pattern, action in _MEDIA:
         if pattern.match(t):
             return ("tool", "control_media", {"action": action})
@@ -629,6 +636,8 @@ def _route_one(t: str):
         if re.search(r"\b(?:tomorrow|kal)\b", t, re.I):
             args["day"] = "tomorrow"
         return ("tool", "get_weather", args)
+    if _SONG_QUESTION.search(t) and (_KNOWLEDGE.search(t) or re.search(r"\b(?:tell me|batao|kis|kaun|kaunsi|kisne)\b", t, re.I)):
+        return ("tool", "ask_about_song", {"question": t})  # "which movie is this song from?" - the one playing
     if _KNOWLEDGE.search(t) and not _NOT_WEB.search(_WEB_OK.sub("", t)) and not _MATH.search(t):
         return ("tool", "answer_question", {"question": t})
     for name, patterns in (("close_app", _CLOSE), ("open_app", _OPEN)):
@@ -640,11 +649,21 @@ def _route_one(t: str):
                     args["foreground"] = False
                 return ("tool", name, args)
     if m := _VOICE.match(t):  # "change your voice" / "use the george voice" (tools/voice.py)
-        return ("tool", "set_voice", {"voice": (m.group("v") or m.group("v2") or "next").strip()})
+        want = (m.group("v") or m.group("v2") or m.group("v3") or "next").strip().lower()
+        return ("tool", "set_voice", {"voice": _VOICE_KIND.get(want, want)})
+    if m := _PLAY_FOR.match(t):  # "play kesariya for 15 seconds" / "play it for 10 seconds"
+        n = int(m.group("n") or m.group("n2")) * (60 if (m.group("u") or m.group("u2")).lower().startswith("m") else 1)
+        q = (m.group("q") or "").strip()
+        if not q or _THIS_ONE.match(q):
+            return ("tool", "music_control", {"action": "play_for", "level": n})
+        return ("tool", "play_music", {"query": q, "seconds": n})
     # Songs through the speakers, no browser (tools/music.py) - "on youtube" / "video" still mean YouTube.
     if m := _MUSIC.match(t):
         q = next(g for g in m.groups() if g)
         return ("tool", "play_music", {"query": q.strip()})
+    if m := _HINDI_SONG.search(t):  # real log: "It wadya sa gaana chala do ya bollywood" (ek badhiya sa gaana...)
+        words = [w for w in re.findall(r"[a-z]+", t.lower()) if w in _GENRES]
+        return ("tool", "play_music", {"query": f"{' '.join(words)} songs" if words else "some music"})
     if (m := _PLAY_BARE.match(t)) and not _NOT_A_SONG.search(m.group("q")):
         from assistant.tools import names
         if not names.best_match(m.group("q"), "app"):  # "play tekken" is the game, not a song
@@ -660,9 +679,24 @@ _MUSIC = re.compile(
     r"^(?P<q3>.+?) (?:ka |ke |ki )?(?:song|songs|gaana|gaane|gana|music) (?:chalao|bajao|lagao|sunao|play karo|chala do|baja do)$",
     re.I)
 _VOICE = re.compile(
-    r"^(?:change|switch|try)(?: your| the| my)? voice(?: to(?: the)? (?P<v>\w+)(?: voice)?)?$|"
-    r"^(?:use|try)(?: the)? (?P<v2>\w+) voice$|^(?:try )?(?:a |another |next |different )voice$|"
-    r"^(?:awaaz|awaz|voice) (?:badlo|change karo|badal do)$", re.I)
+    r"^(?:change|switch|try)(?: your| the| my)?(?: own)? voice(?: to(?: an?| the)? (?P<v>\w+)(?: (?:voice|one))?.*)?$|"
+    r"^(?:use|try|speak in|talk in)(?: an?| the)? (?P<v2>\w+) voice.*$|^(?:try )?(?:a |another |next |different )voice$|"
+    r"^(?:awaaz|awaz|voice) (?:badlo|change karo|badal do)$|^(?:become|be) an? (?P<v3>girl|boy|woman|man|female|male)$",
+    re.I)
+# Real log: "switch your voice to a girl voice female voice" went to the LLM, which picked a browser tab.
+_VOICE_KIND = {"girl": "heart", "female": "heart", "woman": "heart", "lady": "heart", "ladki": "heart",
+               "boy": "echo", "male": "echo", "man": "echo", "ladka": "echo", "british": "george", "indian": "psi"}
+_PLAY_FOR = re.compile(r"^(?:play|bajao|chalao|sunao)(?: me)?(?: only| just)?(?P<q> .+?)? (?:for|only for|just for) "
+                       r"(?:only |just )?(?P<n>\d+) (?P<u>seconds?|secs?|minutes?|mins?)(?: only)?$|"
+                       r"^(?:play|bajao)(?: only| just)? (?P<n2>\d+) (?P<u2>seconds?|secs?)(?: of it| of this| of the song)?$",
+                       re.I)
+_SONG_QUESTION = re.compile(r"(?:this|the current|current|that) (?:song|track|gaana)|(?:ye|yeh|is|iss) gaan[ae]|"
+                            r"the song (?:that'?s|that is|you'?re) playing", re.I)
+_THIS_ONE = re.compile(r"^(?:it|this|that|the song|this song|the music|the audio|the track|again)$", re.I)
+_HINDI_SONG = re.compile(r"\b(?:gaana|gaane|gana|song|songs)\b.{0,25}\b(?:chala do|chalao|bajao|baja do|sunao|suna do|"
+                         r"laga do|lagao)\b", re.I)
+_GENRES = {"bollywood", "punjabi", "romantic", "sad", "party", "old", "lofi", "hindi", "english", "rap", "haryanvi",
+           "bhajan", "ghazal", "sufi", "dance", "workout", "arijit"}
 _PLAY_BARE = re.compile(r"^(?:play|bajao|sunao) (?P<q>.{3,})$", re.I)
 _NOT_A_SONG = re.compile(r"\b(?:video|videos|youtube|channel|tab|it|this|that|next|previous|again|movie|film|trailer|"
                          r"episode|game|match|result|one|first|second|third|last|from|at|speed|"
