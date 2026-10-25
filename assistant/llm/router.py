@@ -64,11 +64,11 @@ _MEDIA = [
      "next"),
     (rf"(?:play |go to )?(?:the )?(?:previous|prev)(?: {_SONG})?|(?:go back to |play |back to )?(?:the )?(?:last|previous) {_SONG}|"
      rf"pichla(?: wala)? {_SONG}(?: chalao| lagao| bajao)?|play the {_SONG} before this", "previous"),
-    (rf"(?:increase|raise|turn up|boost|bump up)(?: the)?(?: system)? (?:volume|sound)|turn the (?:volume|sound) up|"
-     rf"(?:system )?volume (?:up|badhao|badha do|tez {_KARO}|increase {_KARO})|awaa?z (?:badhao|badha do|tez {_KARO}|badhado)|"
+    (rf"(?:increase|raise|turn up|boost|bump up)(?: the)?(?: system| laptop| laptop speaker| speaker| speakers| computer| pc)? (?:volume|sound)|turn the (?:volume|sound) up|"
+     rf"(?:system |laptop |speaker )?volume (?:up|badhao|badha do|tez {_KARO}|increase {_KARO})|awaa?z (?:badhao|badha do|tez {_KARO}|badhado)|"
      rf"(?:.* )?louder|(?:it's |its |it is )?too (?:quiet|soft)|i can't hear(?: anything| it)?", "volume_up"),
-    (rf"(?:decrease|lower|reduce|turn down)(?: the)?(?: system)? (?:volume|sound)|turn the (?:volume|sound) down|"
-     rf"(?:system )?volume (?:down|kam {_KARO}|ghatao)|awaa?z (?:kam {_KARO}|dheere {_KARO}|dheemi {_KARO})|"
+    (rf"(?:decrease|lower|reduce|turn down)(?: the)?(?: system| laptop| laptop speaker| speaker| speakers| computer| pc)? (?:volume|sound)|turn the (?:volume|sound) down|"
+     rf"(?:system |laptop |speaker )?volume (?:down|kam {_KARO}|ghatao)|awaa?z (?:kam {_KARO}|dheere {_KARO}|dheemi {_KARO})|"
      rf"(?:make it )?(?:quieter|softer)|(?:it's |its |it is )?too loud", "volume_down"),
     (rf"mute(?: the| it| everything)?(?: (?:system|volume|sound|audio|laptop|computer|speakers?))?|"
      rf"silence(?: the| it| everything)?(?: (?:laptop|computer|sound|audio))?|(?:awaa?z|sound|volume) band {_KARO}", "mute"),
@@ -77,6 +77,14 @@ _MEDIA = [
      rf"(?:awaa?z|sound|volume) (?:wapas )?(?:chalu|on) {_KARO}", "unmute"),
 ]
 _MEDIA = [(re.compile(rf"^(?:{p})$", re.I), a) for p, a in _MEDIA]
+# "Volume" is the laptop's speakers (user, 2026-10-25); only a volume that names the song/music is the player's.
+_SONG_VOLUME = re.compile(r"\b(?:song|music|gaana|gaane|gaane ki|track)(?:'s)? (?:volume|awaa?z|sound)\b|"
+                          r"\bvolume of (?:the |this )?(?:song|music|track)\b", re.I)
+_SONG_VOLUME_STEP = re.compile(
+    r"^(?:(?:turn|make|put) )?(?:the )?(?:song|music|gaana|gaane ki|track)(?:'s)? (?:volume|awaa?z|sound) "
+    r"(?:(?P<up>up|badhao|badha do|increase|louder|tez karo)|(?:down|kam karo|kam kar do|decrease|lower|quieter|dheere karo))$|"
+    r"^(?:(?P<up2>increase|raise|turn up)|decrease|lower|reduce|turn down)(?: the)? (?:song|music|track)(?:'s)? (?:volume|sound)$",
+    re.I)
 # Speaker-player audio (tools/music.py) in looser words; "post"/"pose" = how Whisper writes "pause".
 _AUDIO_CTRL = re.compile(r"^(?P<a>pause|post|pose|stop|hold|close|end|resume|start|continue|unpause)"
                          r"(?: the| this| that| your| my)? (?:audio|song|music|gaana|track)\b.*$|"
@@ -536,10 +544,14 @@ def _route_one(t: str):
             return _yt("volume_set", level)
         if re.search(r"\bvideo\b", t, re.I):  # the player's own volume on any site (YouTube handled inside)
             return ("tool", "set_video_volume", {"level": level})
+        if _SONG_VOLUME.search(t):  # "song volume 30" - Vaayu's own player; plain "volume" = the speakers
+            return ("tool", "music_control", {"action": "volume_set", "level": level})
         return ("tool", "control_media", {"action": "volume_set", "level": level})
     # "Reduce it to 20 percent" (real log) - a volume change with no "volume" word in it.
     if m := _BARE_LEVEL.match(t):
         return ("tool", "control_media", {"action": "volume_set", "level": min(int(m.group("n")), 100)})
+    if m := _SONG_VOLUME_STEP.match(t):  # "song volume down" / "gaane ki awaz kam karo" - the player, not the speakers
+        return ("tool", "music_control", {"action": "volume_up" if m.group("up") or m.group("up2") else "volume_down"})
     if m := _AUDIO_CTRL.match(t):  # real log: "post the audio which you are playing", "pause the song stop the song"
         verb = (m.group("a") or m.group("a2")).lower()  # close/band = pause too: works for a YouTube song as well
         return ("tool", "control_media", {"action": "play" if verb in ("resume", "start", "continue", "unpause") else "pause"})

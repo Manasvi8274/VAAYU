@@ -123,8 +123,14 @@ def control_media(action: str, level: int | None = None) -> str:
     if action == "volume_set" and level is None:
         raise ValueError("volume_set needs a level (0-100).")
     from assistant.tools import music
-    if music.player.active:  # a song Vaayu is playing himself (no browser): pause/next/volume go to it
+    is_volume = action.startswith("volume") or action in ("mute", "unmute")
+    # A song Vaayu is playing himself: pause/play/next go to it - but VOLUME is the laptop's speakers
+    # (user, 2026-10-25: "here volume is the speaker volume not the song volume"); "song volume" is
+    # routed to music_control separately.
+    if music.player.active and not is_volume:
         return music.control(action, level)
+    if is_volume:
+        return _system_volume(action, level)
     on_youtube = _on_youtube(action, level)
     if on_youtube:
         return on_youtube

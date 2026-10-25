@@ -50,10 +50,12 @@ def test_controls(playing):
     assert "Kesariya by Sony Music India, playing" in music.control("now_playing")
 
 
-def test_pause_and_volume_go_to_the_song_not_the_browser_while_it_plays(playing):
-    with patch.object(media, "_on_youtube", side_effect=AssertionError("went to YouTube")):
+def test_pause_goes_to_the_song_but_volume_stays_the_speakers_while_it_plays(playing):
+    # User: "here volume is the speaker volume not the song volume" - "song volume" is music_control.
+    with patch.object(media, "_on_youtube", side_effect=AssertionError("went to YouTube")),             patch.object(media, "_system_volume", side_effect=lambda a, l: f"Laptop volume is now {l}%."):
         assert media.control_media("pause") == "Paused the song."
-        assert media.control_media("volume_set", 40) == "Music volume is now 40%."
+        assert media.control_media("volume_set", 40) == "Laptop volume is now 40%."
+    assert playing.volume == 0.8  # the song's own level untouched
 
 
 def test_player_output_is_silent_while_paused_and_follows_volume():

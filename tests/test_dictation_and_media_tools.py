@@ -238,14 +238,14 @@ def test_pause_goes_to_a_playing_youtube_video():
     send.assert_not_called()
 
 
-def test_volume_goes_to_youtube_only_while_its_video_is_playing():
+def test_plain_volume_is_always_the_laptop_speakers():
+    # User's rule (2026-10-25): "here volume is the speaker volume not the song volume" - even while a
+    # YouTube video plays. "youtube volume" / "video volume" are routed to the player separately.
     yp, tab, _ = _yt(True)
-    with patch.object(media, "_youtube_video", return_value=(yp, tab, True)):
-        assert media.control_media("volume_set", 75) == "YouTube volume is now 75%."
-    yp.set_volume.assert_called_once_with(level=75, tab=tab)
     ep = _FakeEndpoint(0.9)
-    with patch.object(media, "_youtube_video", return_value=(yp, tab, False)), patch.object(media, "_endpoint", return_value=ep):
+    with patch.object(media, "_youtube_video", return_value=(yp, tab, True)), patch.object(media, "_endpoint", return_value=ep):
         assert media.control_media("volume_set", 75) == "Laptop volume is now 75%."
+    yp.set_volume.assert_not_called()
 
 
 def test_play_resumes_a_paused_youtube_video():
@@ -254,9 +254,11 @@ def test_play_resumes_a_paused_youtube_video():
         assert media.control_media("play") == "Playing."
 
 
-def test_volume_goes_to_a_paused_youtube_that_is_on_screen():
-    # Real log: "reduce the volume to 0 percent" with YouTube paused on screen set the LAPTOP to 0%.
+def test_volume_with_a_paused_youtube_on_screen_is_still_the_speakers():
     yp, tab, _ = _yt(False)
-    with patch.object(media, "_youtube_video", return_value=(yp, tab, False)),             patch.object(media, "_youtube_in_foreground", return_value=True):
-        assert media.control_media("volume_set", 0) == "YouTube volume is now 75%."
-    yp.set_volume.assert_called_once_with(level=0, tab=tab)
+    ep = _FakeEndpoint(0.9)
+    with patch.object(media, "_youtube_video", return_value=(yp, tab, False)),             patch.object(media, "_youtube_in_foreground", return_value=True), patch.object(media, "_endpoint", return_value=ep):
+        assert media.control_media("volume_set", 0) == "Laptop volume is now 0%."
+    yp.set_volume.assert_not_called()
+
+
