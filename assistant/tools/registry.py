@@ -10,6 +10,8 @@ requires_confirmation=True. The orchestrator checks this flag before dispatch.
 from dataclasses import dataclass
 from typing import Any, Callable
 
+from guardian import action_rules
+
 
 @dataclass
 class ToolSpec:
@@ -65,8 +67,9 @@ class ToolRegistry:
     def get_ollama_tools(self) -> list[dict[str, Any]]:
         return [spec.to_ollama_schema() for spec in self._tools.values()]
 
-    def requires_confirmation(self, name: str) -> bool:
-        return self._tools[name].requires_confirmation
+    def requires_confirmation(self, name: str, arguments: dict[str, Any] | None = None) -> bool:
+        """Its own flag, or what it does this time: "click Send" is outward (guardian/action_rules.py)."""
+        return self._tools[name].requires_confirmation or action_rules.needs_yes(name, arguments)
 
     def get_confirmation_prompt(self, name: str, arguments: dict[str, Any]) -> str:
         spec = self._tools[name]
@@ -75,7 +78,9 @@ class ToolRegistry:
         args_text = ", ".join(f"{k}: {v}" for k, v in arguments.items())
         return f"Should I go ahead with {spec.name.replace('_', ' ')} ({args_text})?"
 
-    def dispatch(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    def dispatch(self, name: str, arguments: dict[str, Any], after_content: bool = False,
+                 path: str = "") -> dict[str, Any]:
+        """after_content: Vaayu read a web page / file / message earlier this turn (outward actions refused)."""
         spec = self._tools.get(name)
         if spec is None:
             return {"ok": False, "error": f"Unknown tool '{name}'"}
@@ -89,10 +94,16 @@ class ToolRegistry:
         if missing:  # real log: "That didn't work - open_app() missing 1 required positional argument: 'app_name'"
             what = missing[0].replace("_name", "").replace("_", " ")
             return {"ok": False, "error": f"I'm not sure which {what} you mean - say it again with the name."}
+        refused = action_rules.refusal(name, filtered_arguments, after_content)
+        if refused:  # tiers, rate limits, instructions from content (guardian/action_rules.py)
+            action_rules.log(name, filtered_arguments, False, refused, path)
+            return {"ok": False, "error": refused, "refused": True}
         try:
             result = spec.func(**filtered_arguments)
+            action_rules.log(name, filtered_arguments, True, path=path)
             return {"ok": True, "result": result}
         except Exception as exc:  # tool failures shouldn't crash the assistant
+            action_rules.log(name, filtered_arguments, False, str(exc), path)
             return {"ok": False, "error": str(exc)}
 
 

@@ -76,7 +76,7 @@ def test_fast_route_dispatches_without_calling_the_llm():
     reply, _ = brain.respond([{"role": "user", "content": "open notepad"}], fake)
 
     assert reply == "Opened notepad."
-    fake.dispatch.assert_called_once_with("open_app", {"app_name": "notepad"})
+    fake.dispatch.assert_called_once_with("open_app", {"app_name": "notepad"}, after_content=False, path="fast")
     brain.client.chat.assert_not_called()
 
 

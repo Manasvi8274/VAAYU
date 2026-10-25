@@ -191,6 +191,17 @@ def _isolated_watch_history(tmp_path_factory):
 
 
 @pytest.fixture(autouse=True, scope="session")
+def _isolated_action_log(tmp_path_factory):
+    # Every dispatch writes the append-only action log and counts toward the rate limits - tests get a
+    # temp log and no limits (their own tests set them).
+    from guardian import action_rules
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(action_rules, "LOG_PATH", tmp_path_factory.mktemp("actions") / "actions.log")
+        mp.setattr(action_rules, "_PER_MINUTE", {})
+        yield
+
+
+@pytest.fixture(autouse=True, scope="session")
 def _no_real_start_menu_launch():
     # open_app's fallback reads Windows' Start menu (PowerShell) and LAUNCHES the match
     # (os.startfile / explorer) - tests may never start a real app.
@@ -200,6 +211,9 @@ def _no_real_start_menu_launch():
         mp.setattr(apps, "_open_from_start_menu", lambda name: None)
         mp.setattr(apps, "_real_open_shortcut_target", apps._open_shortcut_target, raising=False)
         mp.setattr(apps, "_open_shortcut_target", lambda name: None)
+        # The open tracker records REAL new windows for 45 s - in tests, an app the user (or the app sweep)
+        # opened meanwhile was taken as the test's "notepad", and close_app went for it.
+        mp.setattr(apps, "_track_opened", lambda *args: None)
         yield
 
 

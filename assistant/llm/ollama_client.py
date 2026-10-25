@@ -272,7 +272,9 @@ class OllamaBrain:
         arguments = names.correct_arguments(name, arguments)  # "Ogru" -> "OG Crew" (see tools/names.py)
         if arguments != heard:
             self.trace.append({"path": path, "name_corrected": {"from": heard, "to": arguments}})
-        result = _with_tool(registry, name).dispatch(name, arguments)
+        from guardian.action_rules import CONTENT_TOOLS
+        read_content = path == "llm" and any(t.get("tool") in CONTENT_TOOLS and t.get("ok") for t in self.trace)
+        result = _with_tool(registry, name).dispatch(name, arguments, after_content=read_content, path=path)
         self.trace.append({"path": path, "tool": name, "args": arguments, "ok": bool(result.get("ok")),
                            "result" if result.get("ok") else "error": str(result.get("result" if result.get("ok") else "error"))})
         return result
@@ -391,7 +393,7 @@ class OllamaBrain:
             if routed and all(name in tool_registry._tools for name, _args in routed[1]):
                 replies = []
                 for name, arguments in routed[1]:  # multi-step: in order, stop at the first failure
-                    if tool_registry.requires_confirmation(name) and not confirm(name, arguments):
+                    if tool_registry.requires_confirmation(name, arguments) and not confirm(name, arguments):
                         self.trace.append({"path": "fast", "tool": name, "args": arguments, "declined": True})
                         replies.append("Okay, I won't do that.")
                         break
@@ -490,7 +492,7 @@ class OllamaBrain:
                 if identical_retries > 1:
                     return last_failure_reply, messages
 
-            if _with_tool(tool_registry, name).requires_confirmation(name) and not confirm(name, arguments):
+            if _with_tool(tool_registry, name).requires_confirmation(name, arguments) and not confirm(name, arguments):
                 tool_result = {"ok": False, "error": "User declined to confirm this action."}
                 self.trace.append({"path": "llm", "tool": name, "args": arguments, "declined": True})
                 last_action_failed = False  # declining is a normal outcome, not a failure to correct
