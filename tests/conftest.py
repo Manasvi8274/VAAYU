@@ -177,3 +177,14 @@ def _no_real_internet_lookups():
         mp.setattr(web_answer, "_get_json", offline)
         mp.setattr(web_answer, "_ddg_text", offline)
         yield
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _isolated_watch_history(tmp_path_factory):
+    # The user's YouTube watch history (their taste) - tests may not read or write it,
+    # and the background logger must never poll a browser from a test.
+    from assistant.tools import youtube_taste
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(youtube_taste, "HISTORY_PATH", tmp_path_factory.mktemp("taste") / "watch_history.jsonl")
+        mp.setattr(youtube_taste, "start_watch_logger", lambda: None)
+        yield

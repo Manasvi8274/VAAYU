@@ -156,6 +156,20 @@ _YT_RULES = [
     (r"^(?:go to |open )?(?:the )?youtube home(?: ?page)?$|^go home on youtube$", lambda m: _yt("home")),
     (r"^(?:next|agla|skip(?: this)?) short$", lambda m: _yt("next_short")),
     (r"^copy(?: the| this)?(?: video| youtube)? (?:link|url)$|^link copy (?:karo|kar do)$", lambda m: _yt("copy_link")),
+    # Suggestions ranked by watch history (tools/youtube_taste.py)
+    (r"^(?:recommend|suggest)(?: me)?(?: a| some| any)?(?: good)?(?: youtube)?(?: something| videos?| video| one)?"
+     r"(?: to watch)?(?: on youtube)?(?: for me)?$|^what should i watch(?: next| now| on youtube)?$|"
+     r"^(?:give me|any|show me)(?: some| a)?(?: video| youtube)? (?:recommendations?|suggestions?)$|"
+     r"^(?:kuch|koi)(?: accha| achha)?(?: video)? (?:recommend|suggest) karo$|^kya dekhu$", lambda m: _yt("recommend")),
+    # A video on the page - real log: "Play the video syncing in stand-up comedy by Pranav Sharma which is
+    # on the right side of the currently played videos." got "Playing." and nothing happened.
+    (r"^(?:play|open|start|click(?: on)?)(?: the)?(?: video| one)?(?: called| named| titled)? (?P<d>.+?),?"
+     r"(?: (?:which|that) is| that's)? (?:on|in|from|at) (?:the )?(?:right(?: hand)?(?: side)?|side ?bar|"
+     r"recommend(?:ed|ations?)|suggest(?:ed|ions?)|up next)\b.*$|"
+     r"^(?:recommendations?|suggestions?|right side) (?:me|mein|se) (?:se )?(?P<d2>.+?) (?:wala|wali|wale)? ?(?:video )?"
+     r"(?:chalao|lagao|kholo)$|"
+     r"^(?:play|open)(?: the)? video (?!(?:in|on|from|again|at|now|for|to|full|ko)\b)(?P<d3>\S+(?: \S+)+)$",
+     lambda m: _yt("play_recommended", (m.group("d") or m.group("d2") or m.group("d3")).strip())),
 ]
 _YT_RULES = [(re.compile(p, re.I), build) for p, build in _YT_RULES]
 

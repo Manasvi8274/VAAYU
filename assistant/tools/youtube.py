@@ -36,6 +36,7 @@ def _remember(tab: dict) -> None:
     # The next "pause"/"volume 40" must land in the tab this just played in.
     from assistant.tools import youtube_player
     youtube_player.remember(tab)
+    youtube_player.record_current(tab, background=True)  # watch history -> recommendations
 
 
 def _resolve_target_tab(new_tab: bool) -> dict:

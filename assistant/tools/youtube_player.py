@@ -13,6 +13,7 @@ confirmation. On YouTube the player API is the source of truth.
 Requires the browser to have been opened by Vaayu (DevTools port 9222).
 """
 
+import json
 import time
 from urllib.parse import quote_plus
 
@@ -388,12 +389,139 @@ def search(query: str, tab=None) -> str:
 
 def play_result(n: int, tab=None) -> str:
     tab = tab or _tab(require_watch=False)
+    if _last_list and time.time() - _last_list[0] < _LIST_FRESH_SECONDS:  # "play the second one" after recommend
+        videos = _last_list[1]
+        if not 1 <= abs(n) <= len(videos):
+            raise RuntimeError(f"I only suggested {len(videos)} - pick one of those.")
+        return _play_video(tab, videos[n - 1 if n > 0 else n])
     href = _ev(tab, f"(() => {{ const a = Array.from(document.querySelectorAll('ytd-video-renderer a#video-title'))"
                     f".filter(a => a.href && !a.href.includes('/shorts/'))[{n - 1}]; return a ? a.href : null; }})()")
     if not href:
         raise RuntimeError(f"There's no result number {n} on this page - search for something first.")
     _navigate(tab, href, f"{_P} && {_P}.getPlayerState ? true : false", "the video")
+    record_current(tab, background=True)
     return f"Playing result {n}: {_ev(tab, f'{_P}.getVideoData().title') or 'the video'}."
+
+
+# --- videos on the page: the right-side recommendations, the home feed, results -------------------------
+
+# The videos the user can see, in page order. YouTube's 2025+ layout uses
+# yt-lockup-view-model (title, then channel, then views/age as text lines);
+# the older renderers are kept for pages that still use them. On a watch
+# page only the right-hand list counts (not the comments or description).
+_CANDIDATES_JS = r"""(() => {
+  const watch = location.pathname === '/watch';
+  const scope = watch ? (document.querySelector('#related') || document.querySelector('#secondary')) : document;
+  if (!scope) return [];
+  const out = [], seen = new Set([new URLSearchParams(location.search).get('v')]);
+  const boxes = scope.querySelectorAll('yt-lockup-view-model, ytd-compact-video-renderer, ytd-video-renderer, ytd-rich-grid-media');
+  for (const b of boxes) {
+    const a = b.querySelector('a[href*="/watch?v="]');
+    if (!a || b.getBoundingClientRect().width === 0) continue;
+    const id = new URL(a.href, location.origin).searchParams.get('v');
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    const t = b.querySelector('h3, #video-title, .yt-lockup-metadata-view-model__title');
+    const title = ((t && (t.getAttribute('title') || t.innerText)) || '').trim();
+    const lines = (b.innerText || '').split('\n').map(s => s.trim()).filter(Boolean);
+    const i = lines.indexOf(title);
+    const rest = i >= 0 ? lines.slice(i + 1) : lines;
+    if (!title) continue;
+    out.push({id, title, channel: rest[0] || '', age: rest.find(s => /ago$/.test(s)) || '',
+              href: new URL(a.getAttribute('href'), location.origin).href});
+    if (out.length >= 30) break;
+  }
+  return out;
+})()"""
+_LIST_FRESH_SECONDS = 600  # "play the second one" refers to the last list Vaayu read out, for 10 minutes
+_last_list: tuple[float, list[dict]] | None = None
+_MATCH_SURE = 0.6  # calibration knob: share of the said words a video must contain to be picked
+
+
+def _candidates(tab, timeout: float = 5.0) -> list[dict]:
+    """Waits for the list to stop growing - live, right after a page loaded it had 4 of its 20."""
+    deadline, last = time.time() + timeout, None
+    while True:
+        videos = _ev(tab, _CANDIDATES_JS) or []
+        if (videos and last is not None and len(videos) == len(last) and len(videos) >= 8) or time.time() >= deadline:
+            return videos
+        last = videos
+        time.sleep(0.5)
+
+
+def record_current(tab, background: bool = False) -> None:
+    """Log what's playing to the watch history (youtube_taste), once its data has loaded."""
+    def run():
+        from assistant.tools import youtube_taste
+        try:
+            data = _until(tab, f"(() => {{ const d = {_P} && {_P}.getVideoData ? {_P}.getVideoData() : null; "
+                               f"return d && d.title ? {{id: d.video_id, title: d.title, author: d.author}} : null; }})()",
+                          bool, timeout=6, every=0.5)
+            if data:
+                youtube_taste.record(data["id"], data["title"], data["author"])
+        except Exception:
+            pass  # history is a nice-to-have - never fail the command over it
+    if background:
+        import threading
+        threading.Thread(target=run, daemon=True).start()
+    else:
+        run()
+
+
+def _play_video(tab, video: dict) -> str:
+    _navigate(tab, video["href"], f"(() => {{ const p = {_P}; return !!(p && p.getVideoData && "
+                                  f"p.getVideoData().video_id === {json.dumps(video['id'])}); }})()", "the video")
+    if _until(tab, f"{_P}.getPlayerState()", lambda s: s in _PLAYING_STATES, timeout=6) not in _PLAYING_STATES:
+        _ev(tab, f"{_P}.playVideo()")
+    record_current(tab, background=True)
+    channel = f" by {video['channel']}" if video.get("channel") else ""
+    return f"Playing '{video['title']}'{channel}."
+
+
+def play_recommended(description: str, tab=None) -> str:
+    """Play the video on the page that matches what was said - by its words (title, channel,
+    "12 hours ago") or its place ("the third one"). Nothing close: search YouTube for it."""
+    from assistant.tools import youtube_taste
+    tab = tab or _tab(require_watch=False)
+    videos = _candidates(tab)
+    n = youtube_taste.ordinal(description)
+    if n is not None:
+        if not videos or not 1 <= abs(n) <= len(videos):
+            raise RuntimeError(f"I can't see a video number {n} on this page.")
+        return _play_video(tab, videos[n - 1 if n > 0 else n])
+    best, sure = youtube_taste.match(description, videos)
+    if best and sure >= _MATCH_SURE:
+        return _play_video(tab, best)
+    query = " ".join(youtube_taste._words(description)) or description
+    from assistant.tools.youtube import play_video_on_youtube
+    play_video_on_youtube(query)
+    return f"I couldn't see that one on this page, so I searched YouTube: playing the top result for {query}."
+
+
+def recommend(tab=None) -> str:
+    """Suggest 3 videos for the user: YouTube's own suggestions on this page (or the home
+    feed, which YouTube already personalises), re-ranked by what they watch."""
+    global _last_list
+    from assistant.tools import youtube_taste
+    tab = tab or youtube_tab(require_watch=False)
+    if tab is None:
+        from assistant.tools.youtube import _resolve_target_tab
+        tab = _resolve_target_tab(False)
+    remember(tab)
+    if "youtube.com" not in (_ev(tab, "location.hostname") or ""):
+        go_home(tab)
+    videos = _candidates(tab)
+    if not videos and not _is_watch({"url": _ev(tab, "location.href") or ""}):
+        go_home(tab)
+        videos = _candidates(tab)
+    if not videos:
+        raise RuntimeError("I can't see any videos on YouTube to suggest right now.")
+    top = youtube_taste.rank(videos)[:3]
+    _last_list = (time.time(), top)
+    because = " based on what you watch" if youtube_taste.history(1) else ""
+    picks = "; ".join(f"{i + 1}, {v['title']}" + (f" by {v['channel']}" if v.get("channel") else "")
+                      for i, v in enumerate(top))
+    return f"Here are three{because}: {picks}. Say 'play the first one', or the second, or the third."
 
 
 def open_channel(tab=None) -> str:
@@ -455,6 +583,7 @@ ACTIONS = {
     "search": lambda v: search(str(v)), "play_result": lambda v: play_result(int(float(v or 1))),
     "open_channel": lambda v: open_channel(), "home": lambda v: go_home(), "next_short": lambda v: next_short(),
     "copy_link": lambda v: copy_link(),
+    "play_recommended": lambda v: play_recommended(str(v or "")), "recommend": lambda v: recommend(),
 }
 
 
@@ -466,7 +595,11 @@ ACTIONS = {
         "(value = seconds), restart, next/previous video, speed (value like 1.5), captions_on/off, "
         "theater_on/off, fullscreen_on/off, loop_on/off, like/unlike/dislike, subscribe, skip_ad, "
         "autoplay_on/off, quality (value like 720p), now_playing, search (value = query, shows results), "
-        "play_result (value = result number), open_channel, home, next_short, copy_link. Every action is "
+        "play_result (value = result number, or the number of a video Vaayu just suggested), "
+        "play_recommended (value = what the user said about a video on the page - its title words, channel, "
+        "age or position, e.g. 'stand-up by Pranav Sharma' or 'third'), recommend (suggest 3 videos for the "
+        "user from YouTube's suggestions, ranked by their watch history), open_channel, home, next_short, "
+        "copy_link. Every action is "
         "checked against YouTube's own player state before it's reported as done."
     ),
     parameters={

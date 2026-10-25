@@ -418,6 +418,8 @@ class Orchestrator:
 
     def run_forever(self) -> None:
         _media_monitor()  # start watching the sound level before the first command
+        from assistant.tools import youtube_taste
+        youtube_taste.start_watch_logger()  # what plays on YouTube, whoever started it -> taste
         if self.continuous:
             self.listener.start()
             print(
