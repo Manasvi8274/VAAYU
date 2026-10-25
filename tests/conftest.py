@@ -273,3 +273,11 @@ def _no_waiting_for_a_real_player():
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(youtube, "_wait_until_playing", lambda video_url, tab, timeout=10.0: None)
         yield
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _isolated_weather_place(tmp_path_factory):
+    from assistant.tools import web_answer
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(web_answer, "PLACE_FILE", tmp_path_factory.mktemp("weather") / "weather_place.txt")
+        yield

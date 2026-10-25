@@ -124,3 +124,23 @@ def test_place_said_with_country_or_old_name_still_geocodes(monkeypatch):
     monkeypatch.setattr(web_answer, "_get_json", fake_get)
     assert web_answer._locate("gurgaon india")[0] == "Gurugram"
     assert web_answer._locate("haryana, panipat")[0] == "Panipat"
+
+
+@pytest.mark.parametrize("text, place", [
+    ("I am asking you about the weather in gurugram india.", "gurugram india"),  # real log: "no internet access"
+    ("Why can't you check the weather.", ""), ("tell me the weather", ""),
+])
+def test_weather_with_personal_words_still_looks_it_up(text, place):
+    assert router.fast_route(text) == ("tools", [("get_weather", {"place": place})])
+
+
+def test_no_city_means_the_last_city_asked(monkeypatch, tmp_path):
+    monkeypatch.setattr(web_answer, "PLACE_FILE", tmp_path / "place.txt")  # don't leak into other tests
+    asked = []
+    monkeypatch.setattr(web_answer, "_locate", lambda p: asked.append(p) or ("X", 1.0, 2.0))
+    monkeypatch.setattr(web_answer, "_get_json", lambda url, params: {"current": {"temperature_2m": 25,
+        "apparent_temperature": 26, "weather_code": 0}, "daily": {"weather_code": [0, 0], "temperature_2m_max": [30, 30],
+        "temperature_2m_min": [20, 20], "precipitation_probability_max": [0, 0]}})
+    web_answer.get_weather("Gurugram")
+    web_answer.get_weather("")
+    assert asked == ["Gurugram", "Gurugram"]

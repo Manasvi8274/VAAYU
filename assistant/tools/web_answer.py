@@ -11,6 +11,7 @@ reach the internet" instead of guessing. Weather is never cached.
 
 import json
 import re
+from pathlib import Path
 from datetime import datetime
 
 import httpx
@@ -54,6 +55,7 @@ def _ddg_text(query: str) -> list[dict]:
     raise ConnectionError(_OFFLINE)
 
 
+PLACE_FILE = Path(__file__).resolve().parent.parent.parent / "data" / "weather_place.txt"
 _REGION_WORDS = {"india", "bharat", "haryana", "punjab", "delhi ncr", "ncr", "up", "uttar", "pradesh", "maharashtra",
                  "karnataka", "rajasthan", "gujarat", "state", "city", "district", "the", "in", "of"}
 
@@ -98,6 +100,18 @@ def _locate(place: str) -> tuple[str, float, float]:
     },
 )
 def get_weather(place: str = "", day: str = "today") -> str:
+    # No city said: the one they asked about last - the IP lookup says "New Delhi" for a Gurugram user.
+    if place.strip():
+        try:
+            PLACE_FILE.parent.mkdir(parents=True, exist_ok=True)
+            PLACE_FILE.write_text(place.strip(), encoding="utf-8")
+        except OSError:
+            pass
+    else:
+        try:
+            place = PLACE_FILE.read_text(encoding="utf-8").strip()
+        except OSError:
+            pass
     name, lat, lon = _locate(place)
     data = _get_json("https://api.open-meteo.com/v1/forecast", {
         "latitude": lat, "longitude": lon, "timezone": "auto", "forecast_days": 2,

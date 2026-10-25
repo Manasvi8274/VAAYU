@@ -267,7 +267,10 @@ _WEATHER = re.compile(r"\b(?:weather|temperature|mausam|forecast|humidity)\b|\bb
                       r"\b(?:will it|is it|going to|gonna)\b.*\b(?:rain|snow|hot|cold|sunny)\b", re.I)
 _WEATHER_PLACE = re.compile(r"\b(?:in|at|of|for) (?:the )?(?P<p>[a-z][a-z .'-]*?)(?: (?:today|tomorrow|tonight|now|this week|kal|aaj))?$|"
                             r"^(?:aaj |kal )?(?P<p2>[a-z][a-z .'-]*?) (?:ka|ki|me|mein|mai) (?:mausam|weather|temperature|baa?rish)", re.I)
-_NOT_A_PLACE = {"it", "today", "tomorrow", "outside", "here", "the day", "the week", "now", "aaj", "kal"}
+_NOT_A_PLACE = {"it", "today", "tomorrow", "outside", "here", "the day", "the week", "now", "aaj", "kal", "my city",
+                "my area", "my place", "my location", "where i am", "me", "us"}
+# The few weather-ish sentences that aren't a forecast request: the laptop's own temperature, a song, the news.
+_NOT_WEATHER = re.compile(r"\b(?:cpu|gpu|laptop|computer|pc|battery|processor|song|gaana|video|news)\b", re.I)
 _KNOWLEDGE = re.compile(r"^(?:who|what|what's|whats|when|where|which|whose|why|how (?:many|much|old|far|tall|big|long|deep|"
                         r"high|fast|to|does|do|did|is|are|was)|tell me about|kaun|kab|kahan|kitne|kitna|kitni)\b|"
                         r"\b(?:kaun hai|kaun hain|kaun tha|kaun thi|kya hai|kab hai|kab tha|kahan hai)$", re.I)
@@ -647,7 +650,9 @@ def _route_one(t: str):
         for pattern, tool, args in _INFO:
             if pattern.search(t):
                 return ("tool", tool, dict(args))
-    if len(t.split()) <= 12 and _WEATHER.search(t) and not _NOT_WEB.search(t):
+    # Weather is never "personal": real log - "I am asking you about the weather in gurugram india" was kept
+    # off the web for its "I"/"you", and the chat model answered "I don't have internet access".
+    if len(t.split()) <= 16 and _WEATHER.search(t) and not _NOT_WEATHER.search(t):
         m = _WEATHER_PLACE.search(t)
         place = ((m.group("p") or m.group("p2")) if m else "").strip()
         args = {"place": "" if place.lower() in _NOT_A_PLACE else place}
