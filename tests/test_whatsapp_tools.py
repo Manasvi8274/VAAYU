@@ -5,6 +5,30 @@ import pytest
 from assistant.tools import whatsapp
 
 
+@pytest.fixture(autouse=True)
+def _contacts_allowed(monkeypatch, request):
+    # These test the WhatsApp Web steps; the contacts allowlist has its own test below.
+    if "allowlist" not in request.node.name:
+        monkeypatch.setattr(whatsapp, "_not_a_known_contact", lambda who: None)
+
+
+def test_allowlist_only_known_contacts_and_their_sound_alikes(monkeypatch):
+    from assistant.tools import names
+    monkeypatch.setattr(names, "load", lambda: {"contact": ["SAVED MESSAGES", "Raman Garg"], "channel": [], "app": []})
+    assert whatsapp._not_a_known_contact("Raman Garg") is None
+    assert whatsapp._not_a_known_contact("raman gargh") is None  # misheard, corrected before sending
+    said = whatsapp._not_a_known_contact("Rahul")
+    assert "isn't in your WhatsApp contacts list" in said and "remember the contact Rahul" in said
+    with pytest.raises(PermissionError):
+        whatsapp.send_whatsapp_message("Rahul", "hi")  # even called directly, nothing is opened or sent
+
+
+def test_allowlist_is_checked_before_asking_to_confirm():
+    from assistant.tools.registry import registry
+    why = registry.refusal_before_asking("send_whatsapp_message", {"contact_name": "Some Stranger", "message": "hi"})
+    assert why and "contacts list" in why
+
+
 def _tab(url="https://web.whatsapp.com/"):
     return {"webSocketDebuggerUrl": "ws://fake", "url": url}
 

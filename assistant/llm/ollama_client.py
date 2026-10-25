@@ -393,6 +393,10 @@ class OllamaBrain:
             if routed and all(name in tool_registry._tools for name, _args in routed[1]):
                 replies = []
                 for name, arguments in routed[1]:  # multi-step: in order, stop at the first failure
+                    if why := tool_registry.refusal_before_asking(name, arguments):
+                        self.trace.append({"path": "fast", "tool": name, "args": arguments, "refused": why})
+                        replies.append(why)
+                        break
                     if tool_registry.requires_confirmation(name, arguments) and not confirm(name, arguments):
                         self.trace.append({"path": "fast", "tool": name, "args": arguments, "declined": True})
                         replies.append("Okay, I won't do that.")
@@ -492,7 +496,11 @@ class OllamaBrain:
                 if identical_retries > 1:
                     return last_failure_reply, messages
 
-            if _with_tool(tool_registry, name).requires_confirmation(name, arguments) and not confirm(name, arguments):
+            if why := _with_tool(tool_registry, name).refusal_before_asking(name, arguments):
+                tool_result = {"ok": False, "error": why}
+                self.trace.append({"path": "llm", "tool": name, "args": arguments, "refused": why})
+                last_action_failed = False  # a rule said no - not something to retry differently
+            elif _with_tool(tool_registry, name).requires_confirmation(name, arguments) and not confirm(name, arguments):
                 tool_result = {"ok": False, "error": "User declined to confirm this action."}
                 self.trace.append({"path": "llm", "tool": name, "args": arguments, "declined": True})
                 last_action_failed = False  # declining is a normal outcome, not a failure to correct

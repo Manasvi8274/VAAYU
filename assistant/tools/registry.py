@@ -25,6 +25,9 @@ class ToolSpec:
     # send) - falls back to a generic prompt naming the tool/arguments if
     # not given.
     confirmation_prompt: Callable[[dict[str, Any]], str] | None = None
+    # Optional: why this call may not run at all, checked BEFORE asking the user to confirm it (asking
+    # "send it?" and then refusing after their yes would be silly) - e.g. WhatsApp's contacts allowlist.
+    precheck: Callable[[dict[str, Any]], str | None] | None = None
 
     def to_ollama_schema(self) -> dict[str, Any]:
         return {
@@ -48,6 +51,7 @@ class ToolRegistry:
         parameters: dict[str, Any],
         requires_confirmation: bool = False,
         confirmation_prompt: Callable[[dict[str, Any]], str] | None = None,
+        precheck: Callable[[dict[str, Any]], str | None] | None = None,
     ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
         def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
             if name in self._tools:
@@ -59,6 +63,7 @@ class ToolRegistry:
                 func=func,
                 requires_confirmation=requires_confirmation,
                 confirmation_prompt=confirmation_prompt,
+                precheck=precheck,
             )
             return func
 
@@ -70,6 +75,10 @@ class ToolRegistry:
     def requires_confirmation(self, name: str, arguments: dict[str, Any] | None = None) -> bool:
         """Its own flag, or what it does this time: "click Send" is outward (guardian/action_rules.py)."""
         return self._tools[name].requires_confirmation or action_rules.needs_yes(name, arguments)
+
+    def refusal_before_asking(self, name: str, arguments: dict[str, Any]) -> str | None:
+        spec = self._tools.get(name)
+        return spec.precheck(arguments) if spec is not None and spec.precheck is not None else None
 
     def get_confirmation_prompt(self, name: str, arguments: dict[str, Any]) -> str:
         spec = self._tools[name]

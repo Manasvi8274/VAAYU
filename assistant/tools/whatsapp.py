@@ -160,11 +160,26 @@ def _last_outgoing_message_text() -> str | None:
         "required": ["contact_name", "message"],
     },
     requires_confirmation=True,
+    precheck=lambda args: _not_a_known_contact(args.get("contact_name", "")),
     confirmation_prompt=lambda args: (
         f"Send \"{args.get('message', '')}\" to {args.get('contact_name', 'that contact')} on WhatsApp?"
     ),
 )
+def _not_a_known_contact(who: str) -> str | None:
+    """Build plan: only chats in the user's own contacts list - an unknown name is stopped, not searched
+    for (the list: assistant/tools/names.py, added to by "remember the contact X"). Sound-alikes of a
+    known name pass ("Raman Gargh" is Raman Garg, corrected before sending)."""
+    from assistant.tools import names
+    if who.strip() and names.best_match(who, "contact"):
+        return None
+    who = who.strip() or "That chat"
+    return (f"{who} isn't in your WhatsApp contacts list, so I won't send it. If it's someone you message, "
+            f"say 'remember the contact {who}' first.")
+
+
 def send_whatsapp_message(contact_name: str, message: str) -> str:
+    if why := _not_a_known_contact(contact_name):
+        raise PermissionError(why)
     _ensure_whatsapp_web_open()
 
     if not _type_into(_SEARCH_BOX_SELECTOR, contact_name):

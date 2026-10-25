@@ -71,6 +71,7 @@ def test_fast_route_dispatches_without_calling_the_llm():
     fake = MagicMock()
     fake._tools = {"open_app": None}
     fake.requires_confirmation.return_value = False
+    fake.refusal_before_asking.return_value = None
     fake.dispatch.return_value = {"ok": True, "result": "Opened notepad."}
 
     reply, _ = brain.respond([{"role": "user", "content": "open notepad"}], fake)
