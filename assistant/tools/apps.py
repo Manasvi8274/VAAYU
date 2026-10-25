@@ -205,12 +205,25 @@ def _proc_name(pid: int) -> str:
         return ""
 
 
-def _track_opened(app_name: str, before: set[int]) -> None:
-    before_windows = set(_windows())
+def _is_part_of(pid: int, app_pids: set[int], store_app: bool) -> bool:
+    """A windowless new process is the app's only if the app started it (a child of its own process), or
+    it's a Store app's process (WindowsApps) when a Store window just opened. Anything else that merely
+    started at the same moment is NOT its (found in the app sweep: wmiprvse, dashost, searchprotocolhost -
+    and it could as well be a new Brave tab of the user's)."""
+    try:
+        proc = psutil.Process(pid)
+        if any(parent.pid in app_pids for parent in proc.parents()):
+            return True
+        return store_app and "\\windowsapps\\" in proc.exe().lower()
+    except psutil.Error:
+        return False
+
+
+def _track_opened(app_name: str, before: set[int], before_windows: set[int]) -> None:
 
     def run():
         deadline, key = time.time() + _TRACK_SECONDS, app_name.strip().lower()
-        hwnds, pids = set(), set()
+        hwnds, pids, store_app = set(), set(), False
         while time.time() < deadline:
             time.sleep(0.5)
             new_pids = _pids() - before
@@ -218,15 +231,13 @@ def _track_opened(app_name: str, before: set[int]) -> None:
                 # a new window - of a new process, or of a shared host (a Store app's frame)
                 if hwnd not in before_windows and (pid in new_pids or _proc_name(pid) in _SHARED_HOSTS):
                     hwnds.add(hwnd)
-                    if _proc_name(pid) not in _SHARED_HOSTS:
+                    if _proc_name(pid) in _SHARED_HOSTS:
+                        store_app = True
+                    else:
                         pids.add(pid)
-            for pid in new_pids:  # the app's own windowless processes (a Store app's CalculatorApp.exe...)
-                if _proc_name(pid) not in _SHARED_HOSTS and (pid in pids or hwnds):
-                    try:
-                        if psutil.Process(pid).create_time() >= time.time() - _TRACK_SECONDS - 2:
-                            pids.add(pid)
-                    except psutil.Error:
-                        pass
+            for pid in new_pids - pids:  # the app's own windowless processes (a Store app's CalculatorApp.exe...)
+                if hwnds and _proc_name(pid) not in _SHARED_HOSTS and _is_part_of(pid, pids, store_app):
+                    pids.add(pid)
             if hwnds:
                 # Recorded as found, not at the end - a "close it" right after the open must see it (found in
                 # the app sweep: 7-Zip closed 4 s after opening and close_app didn't know it yet).
@@ -367,7 +378,9 @@ def open_app(app_name: str, foreground: bool = True) -> str:
     if browser_reply:
         return browser_reply
     resolved_name = _resolve_open_app_name(app_name)
-    before = _pids()
+    # Both taken BEFORE the open: File Explorer's window appears at once (explorer.exe is already
+    # running), so a snapshot taken after it counted that window as old (found in the app sweep).
+    before, before_windows = _pids(), set(_windows())
     try:
         with _quiet_stdout():
             app_open(resolved_name, match_closest=True, output=True, throw_error=True)
@@ -376,7 +389,7 @@ def open_app(app_name: str, foreground: bool = True) -> str:
         # (installed later) failed with its "TEKKEN 7 is not running" (= not found).
         if not _open_from_start_menu(app_name):
             raise RuntimeError(f"I couldn't find an app called {app_name} on this laptop.") from exc
-    _track_opened(app_name, before)
+    _track_opened(app_name, before, before_windows)
     browser_state.note_app_opened(app_name)
     if foreground:
         foreground_by_title(app_name)

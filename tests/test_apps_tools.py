@@ -195,3 +195,21 @@ def test_app_missing_from_appopeners_old_list_opens_from_the_live_start_menu(mon
     assert apps._real_open_from_start_menu("tekken game") == "TEKKEN 7"
     assert launched == ["steam://rungameid/389730"]
     assert apps._real_open_from_start_menu("some made up app") is None
+
+
+def test_only_the_apps_own_windowless_processes_are_counted_as_its(monkeypatch):
+    # App sweep: wmiprvse/dashost started the same second as Camera and close_app tried to end them -
+    # a new Brave tab of the user's could have been next.
+    from types import SimpleNamespace
+    from assistant.tools import apps
+    procs = {
+        1: SimpleNamespace(parents=lambda: [SimpleNamespace(pid=100)], exe=lambda: r"C:\Tools\helper.exe"),
+        2: SimpleNamespace(parents=lambda: [SimpleNamespace(pid=7)], exe=lambda: r"C:\Windows\System32\wbem\WmiPrvSE.exe"),
+        3: SimpleNamespace(parents=lambda: [SimpleNamespace(pid=7)],
+                           exe=lambda: r"C:\Program Files\WindowsApps\Microsoft.WindowsCalculator\CalculatorApp.exe"),
+    }
+    monkeypatch.setattr(apps.psutil, "Process", lambda pid: procs[pid])
+    assert apps._is_part_of(1, {100}, store_app=False)        # started by the app itself
+    assert not apps._is_part_of(2, {100}, store_app=True)     # a Windows service that happened to start
+    assert apps._is_part_of(3, {100}, store_app=True)         # a Store app's own process
+    assert not apps._is_part_of(3, {100}, store_app=False)    # ...but only when a Store window opened

@@ -89,10 +89,10 @@ def sweep(only: list[str]) -> list[dict]:
             new = {p: w for p, w in windowed_pids().items() if p not in before_windows}
             if new and time.time() - t > 2.5:
                 break
-        row["opened"] = bool(new)
-        row["window"] = next(iter(new.values()), "")
         time.sleep(1.0)  # let the tracker (open_app's background look) see it too
         entry = apps._opened_entry(name)
+        row["opened"] = bool(new or entry)  # a Store app's window belongs to an already-running host
+        row["window"] = next(iter(new.values()), "")
         if not entry:
             row["note"] = row["note"] or "no new window of its own (already open, or it lives in the tray)"
             row["closed"] = None  # never close what the user already had open
