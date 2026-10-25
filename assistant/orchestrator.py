@@ -157,6 +157,23 @@ def _media_monitor() -> "_MediaMonitor":
     return _monitor
 
 
+# While media plays, these need no "Vaayu" first: a short sentence that routes
+# straight to a player control (pause, volume, skip...). Video dialogue rarely
+# is one, and if it ever is, the worst case is a pause - everything else still
+# needs the name.
+_PLAYER_TOOLS = {"control_media", "youtube_control", "control_video_playback", "set_video_volume", "seek_video",
+                 "set_video_fullscreen"}
+_PLAYER_MAX_WORDS = 8
+
+
+def _is_player_command(text: str) -> bool:
+    from assistant.llm import router
+    if len(text.split()) > _PLAYER_MAX_WORDS:
+        return False
+    routed = router.fast_route(text)
+    return bool(routed and routed[0] == "tools" and all(name in _PLAYER_TOOLS for name, _a in routed[1]))
+
+
 def _media_playing() -> bool:
     try:
         return _media_monitor().playing()
@@ -360,8 +377,11 @@ class Orchestrator:
             if time.time() < self._name_window_until:
                 self._name_window_until = 0.0  # this sentence was invited by a bare "Vaayu"
             elif not is_name_mentioned(text):
-                interaction_log.log_event("ignored_media", text=text)
-                return
+                if not _is_player_command(text):
+                    interaction_log.log_event("ignored_media", text=text)
+                    return
+                # Real log: "Pause the video." heard perfectly, twice, and ignored for lacking "Vaayu".
+                interaction_log.log_event("player_command", text=text)
             else:
                 rest = text_after_name(text)
                 if not has_command_content(rest):

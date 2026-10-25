@@ -6,6 +6,8 @@ Offline, both fail with a plain "couldn't reach the internet" instead of
 guessing - the assistant only knows what it looked up.
 """
 
+import re
+
 import httpx
 
 from assistant.tools.registry import registry
@@ -44,17 +46,35 @@ def _ddg_text(query: str) -> list[dict]:
     raise ConnectionError(_OFFLINE)
 
 
+_REGION_WORDS = {"india", "bharat", "haryana", "punjab", "delhi ncr", "ncr", "up", "uttar", "pradesh", "maharashtra",
+                 "karnataka", "rajasthan", "gujarat", "state", "city", "district", "the", "in", "of"}
+
+
+# Old names the geocoder puts elsewhere: "gurgaon" was a village in Maharashtra, "bangalore" a town in Pakistan.
+_OLD_NAMES = {"gurgaon": "gurugram", "bangalore": "bengaluru", "bombay": "mumbai", "calcutta": "kolkata",
+              "madras": "chennai", "poona": "pune", "baroda": "vadodara", "mysore": "mysuru", "trivandrum":
+              "thiruvananthapuram", "benares": "varanasi", "banaras": "varanasi"}
+
+
 def _locate(place: str) -> tuple[str, float, float]:
     if not place.strip():  # no place said: wherever this laptop is, from its IP
         here = _get_json("http://ip-api.com/json/", {"fields": "status,city,lat,lon"})
         if here.get("status") != "success":
             raise ValueError("I couldn't tell where you are - say the city, like: weather in Gurugram.")
         return here["city"], here["lat"], here["lon"]
-    found = _get_json("https://geocoding-api.open-meteo.com/v1/search",
-                      {"name": place.strip(), "count": 1, "language": "en"}).get("results")
-    if not found:
-        raise ValueError(f"I couldn't find a place called {place.strip()}.")
-    return found[0]["name"], found[0]["latitude"], found[0]["longitude"]
+    # Open-Meteo wants a bare place name - live, "gurgaon india" and "haryana, panipat" found nothing.
+    # Try what was said, then without country/state words, then each word, Indian places first.
+    words = [_OLD_NAMES.get(w, w) for w in re.split(r"[\s,]+", place.lower()) if w and w not in _REGION_WORDS]
+    place = _OLD_NAMES.get(place.strip().lower(), place)
+    for name in dict.fromkeys([place.strip(), " ".join(words), *reversed(words)]):
+        if not name:
+            continue
+        found = _get_json("https://geocoding-api.open-meteo.com/v1/search",
+                          {"name": name, "count": 5, "language": "en"}).get("results") or []
+        found.sort(key=lambda r: (r.get("country_code") != "IN", -(r.get("population") or 0)))
+        if found:
+            return found[0]["name"], found[0]["latitude"], found[0]["longitude"]
+    raise ValueError(f"I couldn't find a place called {place.strip()}.")
 
 
 @registry.register(

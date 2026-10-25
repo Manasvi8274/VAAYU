@@ -1,3 +1,4 @@
+import pytest
 """
 Tests for Orchestrator._voice_confirm - the voice-based confirmation gate for
 sensitive tools (e.g. sending a WhatsApp message). Built because the previous
@@ -250,3 +251,18 @@ def test_saved_audio_is_a_playable_wav_and_old_files_are_pruned(tmp_path, monkey
     assert len(left) == 2 and names[-1] in left
     with wave.open(str(tmp_path / names[-1])) as w:
         assert (w.getframerate(), w.getnchannels(), w.getnframes()) == (16000, 1, 1600)
+
+
+@pytest.mark.parametrize("text, passes", [
+    ("Pause the video.", True),  # real log: heard perfectly, ignored for lacking "Vaayu"
+    ("Change volume to 20 percent for youtube.", True),
+    ("skip ad", True),
+    ("Did you hear your opinion of me just confirms my opinion of you yeah oh I smell something burning.", False),
+    ("To 20 percent again to make all this I have sense.", False),
+    ("Go ahead hi.", False),
+    ("open brave", False),  # not a player control: still needs the name while media plays
+    ("send hi to SAVED MESSAGES on whatsapp", False),
+])
+def test_player_commands_need_no_name_while_media_plays(text, passes):
+    from assistant.orchestrator import _is_player_command
+    assert _is_player_command(text) is passes

@@ -30,6 +30,8 @@ from assistant.tools.registry import ToolRegistry
 _LEAD = re.compile(
     r"^(?:(?:hey|ok|okay|so|and|um+|uh+|hmm+|hold on|let's|lets|vaa?yu|please|pls|can you|could you|would you|"
     r"will you|zara|just)\s+)*", re.I)
+# Whisper adds a stray "You" before a command (real log: "You open youtube." -> 15 s LLM detour, failed).
+_STRAY_YOU = re.compile(r"^you\s+(?=(?:open|close|play|pause|resume|stop|mute|unmute|search|show|turn|set|skip|go|take|lock|send|type)\b)", re.I)
 _TAIL = re.compile(r"(?:\s+(?:please|pls|for me|na|yaar|now|right now|bhai|jaldi|quickly|a bit|a little|"
                    r"jaldi se|vaa?yu|for a (?:second|sec|moment|minute|bit)|for now|real quick))+$", re.I)
 _FILLER_WORDS = re.compile(r"\b(?:um+|uh+|hmm+|erm|thoda|zara)\b", re.I)
@@ -290,7 +292,7 @@ _LIST_TABS = re.compile(r"^(?:what|which) tabs (?:are|do i have) open$|^(?:list|
 _YOUTUBE = re.compile(r"^(?:search|find|look up) (?:on )?youtube (?:for )?(?P<q>.+)$|^(?:play|search|put on) (?P<q2>.+?) on youtube$|"
                       r"^youtube (?:pe|par|pr) (?P<q3>.+?) (?:chalao|lagao|bajao|search karo|dikhao)$", re.I)
 _CHANNEL_VIDEO = re.compile(
-    r"^(?:open youtube (?:and )?)?play (?:the )?(?:latest|newest|new|most recent|recent) video (?:from|of|by|on) (?:the )?(?P<c>.+?)(?: channel| youtube channel)?(?: on youtube)?$|"
+    r"^(?:open youtube (?:and )?)?play (?:the )?(?:latest|newest|new|most recent|recent) video (?:from|of|by|on) (?:the )?(?P<c>.+?)(?: channel| youtube channel)?(?: (?:on|in) youtube)?$|"
     r"^(?P<c2>.+?) (?:ka|ki|ke) (?:latest|naya|new|nayi) video (?:chalao|lagao|dikhao|play karo)$|"
     r"^play (?P<c3>.+?)'s (?:latest|newest|new) video$", re.I)
 _CHANNEL_HINT = re.compile(r"\b(?:latest|newest|new|naya|recent) video\b|\bchannel\b", re.I)
@@ -428,6 +430,7 @@ def normalize(text: str, keep_commas: bool = False) -> str:
     t = _FILLER_WORDS.sub(" ", t)
     t = re.sub(r"\s+", " ", t).strip()
     t = _LEAD.sub("", t)
+    t = _STRAY_YOU.sub("", t)
     t = _TAIL.sub("", t)
     return t.strip()
 

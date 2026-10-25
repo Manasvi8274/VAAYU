@@ -253,3 +253,16 @@ def test_bare_whatsapp_message_splits_only_on_a_known_chat(text, want):
 ])
 def test_overnight_benchmark_misses(text, want):
     assert router.fast_route(text) == ("tools", [want])
+
+
+@pytest.mark.parametrize("text, want", [
+    ("You open youtube.", ("open_website", {"url_or_query": "youtube.com"})),  # real log: stray "You" from Whisper
+    ("Play latest video of og crew in youtube.", ("play_latest_video_from_channel", {"channel_name": "og crew"})),
+])
+def test_morning_log_phrasings(text, want):
+    assert router.fast_route(text) == ("tools", [want])
+
+
+def test_stray_you_is_only_dropped_before_a_command():
+    assert router.fast_route("you are awesome") is None
+    assert router.fast_route("are you there")[0] == "reply"

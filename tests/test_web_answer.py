@@ -110,3 +110,17 @@ def test_weather_is_spoken_as_is_and_answers_are_phrased_by_the_llm(monkeypatch)
     assert reply == "Droupadi Murmu is the President of India."
     sent = brain.client.chat.call_args.kwargs["messages"]
     assert "Droupadi Murmu" in sent[1]["content"] and "tools" not in brain.client.chat.call_args.kwargs
+
+
+def test_place_said_with_country_or_old_name_still_geocodes(monkeypatch):
+    # Real log: "weather in gurgaon india" / "haryana, panipat" -> "couldn't find a place".
+    asked = []
+
+    def fake_get(url, params):
+        asked.append(params["name"])
+        known = {"gurugram": [{"name": "Gurugram", "latitude": 28.46, "longitude": 77.03, "country_code": "IN"}],
+                 "panipat": [{"name": "Panipat", "latitude": 29.39, "longitude": 76.97, "country_code": "IN"}]}
+        return {"results": known.get(params["name"].lower(), [])}
+    monkeypatch.setattr(web_answer, "_get_json", fake_get)
+    assert web_answer._locate("gurgaon india")[0] == "Gurugram"
+    assert web_answer._locate("haryana, panipat")[0] == "Panipat"
