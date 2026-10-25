@@ -198,6 +198,8 @@ def _no_real_start_menu_launch():
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(apps, "_real_open_from_start_menu", apps._open_from_start_menu, raising=False)
         mp.setattr(apps, "_open_from_start_menu", lambda name: None)
+        mp.setattr(apps, "_real_open_shortcut_target", apps._open_shortcut_target, raising=False)
+        mp.setattr(apps, "_open_shortcut_target", lambda name: None)
         yield
 
 

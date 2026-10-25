@@ -698,11 +698,15 @@ def _route_one(t: str):
         return ("tool", "ask_about_song", {"question": t})  # "which movie is this song from?" - the one playing
     if _KNOWLEDGE.search(t) and not _NOT_WEB.search(_WEB_OK.sub("", t)) and not _MATH.search(t):
         return ("tool", "answer_question", {"question": t})
+    unforced, forced = re.subn(r"^(?:force(?:fully)?|zabardasti) (?=close|quit|kill|shut)|"
+                               r" (?:forcefully|by force|zabardasti)(?= band| close|$)", "", t, flags=re.I)
     for name, patterns in (("close_app", _CLOSE), ("open_app", _OPEN)):
         for pattern in patterns:
-            m = pattern.match(t)
+            m = pattern.match(unforced if name == "close_app" else t)
             if m and _app_ok(m.group("app").strip()):
                 args = {"app_name": m.group("app").strip()}
+                if name == "close_app" and forced:
+                    args["force"] = True
                 if "bg" in pattern.groupindex and m.group("bg"):
                     args["foreground"] = False
                 return ("tool", name, args)

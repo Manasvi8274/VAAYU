@@ -32,11 +32,11 @@ _SKIP = re.compile(
     r"computer management|services|task scheduler|event viewer|system configuration|security policy|firewall|odbc|"
     r"iscsi|component services|print management|memory diagnostic|hyper-v|system information|resource monitor|"
     r"performance monitor|windows tools|local security|group policy|bitlocker|backup|restore|shutdown|restart|"
-    r"sign out|log off|python|pythonw|idle \(|vaayu|guardian|claude code|uninstaller|benchmark|"
+    r"sign out|log off|python|pythonw|idle \(|vaayu|guardian|claude code|uninstaller|benchmark|task manager|"
     # remote access / side effects / takes over input / Vaayu's own brain:
     r"getscreen|quick assist|anydesk|teamviewer|utorrent|bittorrent|narrator|voice access|ollama|lp-app", re.I)
 _OPEN_WAIT, _HEAVY_WAIT = 6.0, 30.0
-_HEAVY = re.compile(r"tekken|steam|epic|unity|visual studio(?! code)|android studio|blender|game|god of war|assassin|"
+_HEAVY = re.compile(r"tekken|steam|nvidia|epic|unity|visual studio(?! code)|android studio|blender|game|god of war|assassin|"
                     r"wukong|black myth|stellar blade|minecraft|pycharm|xbox", re.I)
 
 
@@ -87,9 +87,10 @@ def sweep(only: list[str]) -> list[dict]:
                 row["note"] = "asked for admin permission (Windows prompt) - answer it 'No'"
                 break
             new = {p: w for p, w in windowed_pids().items() if p not in before_windows}
-            if new and time.time() - t > 2.5:
+            # a slow app's first new window can be someone else's (Steam's "Launching..." before TEKKEN's own)
+            if new and time.time() - t > 2.5 and (apps._opened_entry(name) or not _HEAVY.search(name)):
                 break
-        time.sleep(1.0)  # let the tracker (open_app's background look) see it too
+        time.sleep(15.0 if _HEAVY.search(name) else 1.0)  # a game ignores X while still loading; tracker catch-up
         entry = apps._opened_entry(name)
         row["opened"] = bool(new or entry)  # a Store app's window belongs to an already-running host
         row["window"] = next(iter(new.values()), "")

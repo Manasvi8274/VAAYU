@@ -42,11 +42,32 @@ def test_position(said, n):
 
 def test_taste_ranks_the_channel_they_watch_first_and_watched_videos_last(history):
     now = datetime.now()
-    rows = [{"ts": (now - timedelta(days=d)).isoformat(), "id": f"x{d}", "title": f"OG Crew vlog {d}", "channel": "OG Crew"}
-            for d in range(3)] + [{"ts": now.isoformat(), "id": "b", "title": "Arijit Singh Top 10 Songs", "channel": "T-Series"}]
+    rows = [{"ts": (now - timedelta(days=d)).isoformat(), "id": f"x{d}", "title": f"OG Crew vlog {d}", "channel": "OG Crew",
+             "duration": 600, "heard": 600} for d in range(3)] + \
+           [{"ts": now.isoformat(), "id": "b", "title": "Arijit Singh Top 10 Songs", "channel": "T-Series",
+             "duration": 600, "heard": 600}]
     history.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
     ranked = [v["id"] for v in youtube_taste.rank(RECS)]
     assert ranked[0] == "c" and ranked[-1] == "b"  # b already watched
+
+
+def test_only_songs_played_at_least_half_their_length_shape_the_taste(history):
+    # User's rule: 10 s of a 1-minute song is left out of recommendations.
+    youtube_taste.record("s1", "Kesariya", "Pritam", duration=60)
+    youtube_taste.heard("s1", 10)
+    youtube_taste.record("s2", "Tum Hi Ho", "T-Series", duration=60)
+    youtube_taste.heard("s2", 20)
+    youtube_taste.heard("s2", 35)
+    youtube_taste.heard("s2", 5)  # a later, smaller report never lowers it
+    channels, _ = youtube_taste.profile()
+    assert "t-series" in channels and "pritam" not in channels
+    assert youtube_taste.history()[-1]["heard"] == 35
+
+
+def test_old_rows_without_a_play_time_dont_count(history):
+    history.write_text(json.dumps({"ts": datetime.now().isoformat(), "id": "o", "title": "Old", "channel": "Old Ch"}) + "\n",
+                       encoding="utf-8")
+    assert not youtube_taste.profile()[0]
 
 
 def test_record_skips_a_repeat_of_the_last_video(history):

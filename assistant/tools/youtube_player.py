@@ -470,10 +470,13 @@ def record_current(tab, background: bool = False) -> None:
         from assistant.tools import youtube_taste
         try:
             data = _until(tab, f"(() => {{ const d = {_P} && {_P}.getVideoData ? {_P}.getVideoData() : null; "
-                               f"return d && d.title ? {{id: d.video_id, title: d.title, author: d.author}} : null; }})()",
+                               f"return d && d.title ? {{id: d.video_id, title: d.title, author: d.author, "
+                               f"t: {_P}.getCurrentTime(), len: {_P}.getDuration()}} : null; }})()",
                           bool, timeout=6, every=0.5)
             if data:
-                youtube_taste.record(data["id"], data["title"], data["author"])
+                youtube_taste.record(data["id"], data["title"], data["author"], data.get("len") or 0)
+                # ponytail: the video's position, so a skip ahead counts as watched; per-poll counting if it matters
+                youtube_taste.heard(data["id"], data.get("t") or 0, data.get("len") or 0)
         except Exception:
             pass  # history is a nice-to-have - never fail the command over it
     if background:

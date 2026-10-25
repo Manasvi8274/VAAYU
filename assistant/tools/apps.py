@@ -170,8 +170,10 @@ def _proc_exe(p) -> str:
 # processes. Shared Windows hosts are never ended - a Store app's window belongs to ApplicationFrameHost,
 # which hosts every Store app (found in the app sweep: closing Calculator left it running, as it should).
 _OPENED: dict[str, dict] = {}   # app -> {"hwnds": set, "pids": set}
-_TRACK_SECONDS = 8.0   # how long after an open to look for its new windows
-_CLOSE_WAIT = 5.0      # how long a polite close (like clicking X) gets before the next step
+_TRACK_SECONDS = 45.0  # how long after an open to look for its first window (app sweep: PyCharm, NVIDIA App,
+                       # games show theirs after 10-30 s)
+_SETTLE_SECONDS = 3.0  # ...and how long after that first one (a splash screen, then the main window)
+_CLOSE_WAIT = 10.0     # how long a polite close (like clicking X) gets (app sweep: TEKKEN takes 6 s)
 _SHARED_HOSTS = {"applicationframehost.exe", "runtimebroker.exe", "dllhost.exe", "svchost.exe", "explorer.exe",
                  "conhost.exe", "sihost.exe", "taskhostw.exe", "searchhost.exe", "startmenuexperiencehost.exe",
                  "shellexperiencehost.exe", "textinputhost.exe", "backgroundtaskhost.exe"}
@@ -223,8 +225,10 @@ def _track_opened(app_name: str, before: set[int], before_windows: set[int]) -> 
 
     def run():
         deadline, key = time.time() + _TRACK_SECONDS, app_name.strip().lower()
-        hwnds, pids, store_app = set(), set(), False
+        hwnds, pids, store_app, first_seen = set(), set(), False, None
         while time.time() < deadline:
+            if first_seen:  # stop soon after it showed up - later windows are someone else's (another open)
+                deadline = min(deadline, first_seen + _SETTLE_SECONDS)
             time.sleep(0.5)
             new_pids = _pids() - before
             for hwnd, pid in _windows().items():
@@ -239,6 +243,7 @@ def _track_opened(app_name: str, before: set[int], before_windows: set[int]) -> 
                 if hwnds and _proc_name(pid) not in _SHARED_HOSTS and _is_part_of(pid, pids, store_app):
                     pids.add(pid)
             if hwnds:
+                first_seen = first_seen or time.time()
                 # Recorded as found, not at the end - a "close it" right after the open must see it (found in
                 # the app sweep: 7-Zip closed 4 s after opening and close_app didn't know it yet).
                 _OPENED[key] = {"hwnds": set(hwnds), "pids": set(pids)}
@@ -272,31 +277,53 @@ def _opened_entry(app_name: str) -> dict | None:
     return entry
 
 
-def _close_tracked(app_name: str, _ids=None) -> str:
-    """Close politely (WM_CLOSE to its own windows, like clicking X); a window still asking about unsaved
-    changes is left for the user (their rule: ask before saving); its own windowless leftovers are ended."""
-    import win32con
-    import win32gui
-    entry = _opened_entry(app_name)
-    if entry is None:
-        return f"Closed {app_name}."
-    for hwnd in entry["hwnds"]:
-        try:
-            win32gui.PostMessage(hwnd, win32con.WM_CLOSE, 0, 0)
-        except Exception:
-            pass
-    deadline = time.time() + _CLOSE_WAIT
-    while time.time() < deadline and any(win32gui.IsWindow(h) and win32gui.IsWindowVisible(h) for h in entry["hwnds"]):
-        time.sleep(0.25)
-    if any(win32gui.IsWindow(h) and win32gui.IsWindowVisible(h) for h in entry["hwnds"]):
-        raise RuntimeError(f"{app_name} is still open - it may be asking you to save something.")
-    time.sleep(0.5)
-    for pid in entry["pids"]:  # its own processes, windowless now (tray, background, a Store app's process)
+def _end(pids: set[int]) -> None:
+    for pid in pids:
         if psutil.pid_exists(pid) and _proc_name(pid) not in _SHARED_HOSTS:
             try:
                 psutil.Process(pid).terminate()
             except psutil.Error:
                 pass
+
+
+def _close_tracked(app_name: str, force: bool = False) -> str:
+    """Close politely (WM_CLOSE to its own windows, like clicking X). A window still up after that is left
+    for the user - it may be asking to save (their rule), and Windows 11 Notepad asks INSIDE its window, so
+    there's no telling it apart from an app that ignored the close - unless they said force. A window
+    Windows shields from other programs (Task Manager, Magnifier, Steps Recorder: "Access is denied" in
+    the app sweep) can't be asked at all, so its app is ended, like Task Manager's End task."""
+    import win32con
+    import win32gui
+    import win32process
+    entry = _opened_entry(app_name)
+    if entry is None:
+        return f"Closed {app_name}."
+    pids = set(entry["pids"])
+    for pid in entry["pids"]:  # and what it started since (a launcher's game)
+        try:
+            pids |= {c.pid for c in psutil.Process(pid).children(recursive=True)}
+        except psutil.Error:
+            pass
+    pids = {p for p in pids if _proc_name(p) not in _SHARED_HOSTS}
+    hwnds = entry["hwnds"] | {h for h, pid in _windows().items() if pid in pids}  # its later windows too
+    if force:
+        _end(pids)
+    for hwnd in hwnds:
+        try:
+            win32gui.PostMessage(hwnd, win32con.WM_CLOSE, 0, 0)
+        except Exception:  # "Access is denied"
+            _end({win32process.GetWindowThreadProcessId(hwnd)[1]})
+
+    def still_up():
+        return [h for h in hwnds if win32gui.IsWindow(h) and win32gui.IsWindowVisible(h)]
+    deadline = time.time() + _CLOSE_WAIT
+    while time.time() < deadline and still_up():
+        time.sleep(0.25)
+    if still_up():
+        raise RuntimeError(f"{app_name} is still open - it may be asking you to save something. "
+                           f"Say 'force close {app_name}' to close it anyway.")
+    time.sleep(0.5)
+    _end(pids)  # its own processes, windowless now (tray, background, a Store app's process)
     _OPENED.pop(entry["key"], None)
     return f"Closed {app_name}."
 
@@ -321,18 +348,59 @@ def _start_menu_apps() -> dict[str, str]:
     return apps
 
 
+def _start_menu_match(app_name: str) -> str | None:
+    """The Start-menu name that sounds like app_name, or None if none is close."""
+    import difflib
+    from assistant.tools.names import sound_key
+    # "open tekken game which is present in my laptop" (real log) - the generic words aren't its name
+    want = sound_key(re.sub(r"\b(?:game|app|application|software|program|the|my)\b", " ", app_name, flags=re.I))
+    apps = _start_menu_apps()
+    best = max(apps, key=lambda n: difflib.SequenceMatcher(None, want, sound_key(n)).ratio(), default=None)
+    if not best or difflib.SequenceMatcher(None, want, sound_key(best)).ratio() < 0.75:
+        return None
+    return best
+
+
+def _moved(target: str, drive=None):
+    """Where a moved program's file is now: the same tail of its path, from the drive's root or one folder
+    down ("E:\\shadows\\Assassin Creed Shadows\\ACShadows.exe" now at "E:\\Assassin Creed Shadows\\...")."""
+    from pathlib import Path
+    p, drive = Path(target), Path(drive or Path(target).anchor)
+    try:
+        roots = [drive] + [d for d in drive.iterdir() if d.is_dir()]
+    except OSError:
+        return None
+    tails = [Path(*p.parts[i:]) for i in range(2, len(p.parts))]
+    return next((r / t for t in tails for r in roots if (r / t).is_file()), None)
+
+
+def _open_shortcut_target(app_name: str) -> str | None:
+    """A Start-menu entry whose program file is gone would pop Windows' "Problem with Shortcut" box and the
+    launch hangs on it (found in the app sweep: 4 games deleted, 1 moved, their shortcuts left over).
+    Moved: opens it from where it is now (its name); deleted: says so; a normal entry: None."""
+    import os
+    try:
+        best = _start_menu_match(app_name)
+        target = _start_menu_apps().get(best, "") if best else ""
+    except Exception:
+        return None  # can't read the Start menu: open it the usual way
+    if not re.match(r"^[a-z]:\\", target, re.I) or os.path.exists(target):
+        return None
+    now_at = _moved(target)
+    if now_at is None:
+        raise RuntimeError(f"{best} isn't on this laptop any more - its Start-menu shortcut points to {target}, "
+                           "which was deleted or moved.")
+    subprocess.Popen([str(now_at)], cwd=str(now_at.parent))
+    return best
+
+
 def _open_from_start_menu(app_name: str) -> str | None:
     """Launch the Start-menu app that sounds like app_name; its name, or None if none is close."""
     import os
-    from assistant.tools.names import sound_key
-    apps = _start_menu_apps()
-    # "open tekken game which is present in my laptop" (real log) - the generic words aren't its name
-    name = re.sub(r"\b(?:game|app|application|software|program|the|my)\b", " ", app_name, flags=re.I)
-    want = sound_key(name)
-    best = max(apps, key=lambda n: __import__("difflib").SequenceMatcher(None, want, sound_key(n)).ratio(), default=None)
-    if not best or __import__("difflib").SequenceMatcher(None, want, sound_key(best)).ratio() < 0.75:
+    best = _start_menu_match(app_name)
+    if not best:
         return None
-    app_id = apps[best]
+    app_id = _start_menu_apps()[best]
     if "://" in app_id:  # steam://rungameid/..., http://... - the URL's own handler launches it
         os.startfile(app_id)
     else:
@@ -382,8 +450,11 @@ def open_app(app_name: str, foreground: bool = True) -> str:
     # running), so a snapshot taken after it counted that window as old (found in the app sweep).
     before, before_windows = _pids(), set(_windows())
     try:
-        with _quiet_stdout():
-            app_open(resolved_name, match_closest=True, output=True, throw_error=True)
+        if not _open_shortcut_target(app_name):
+            with _quiet_stdout():
+                app_open(resolved_name, match_closest=True, output=True, throw_error=True)
+    except RuntimeError:
+        raise  # a broken shortcut: said plainly, nothing launched
     except Exception as exc:
         # AppOpener's app list is a snapshot from when it was built - found live, Tekken 7
         # (installed later) failed with its "TEKKEN 7 is not running" (= not found).
@@ -418,14 +489,19 @@ def open_app(app_name: str, foreground: bool = True) -> str:
             "app_name": {
                 "type": "string",
                 "description": "Name of the application to close, e.g. 'chrome' or 'notepad'.",
-            }
+            },
+            "force": {
+                "type": "boolean",
+                "description": "Only when the user says 'force close' / 'zabardasti band karo': close even if "
+                               "it's asking something (unsaved work is lost).",
+            },
         },
         "required": ["app_name"],
     },
 )
-def close_app(app_name: str) -> str:
+def close_app(app_name: str, force: bool = False) -> str:
     if _opened_entry(app_name):  # an app Vaayu opened: close exactly the windows/programs it started
-        return _close_tracked(app_name)
+        return _close_tracked(app_name, force)
     # No alias resolution here, deliberately - see _OPEN_APP_NAME_ALIASES'
     # docstring, close_things() matches real running process names, not
     # the registered-app-name database open_things() uses, so "vlc" alone

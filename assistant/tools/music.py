@@ -37,6 +37,7 @@ class _Player:
         self.start_at = 0.0       # where this run of the decoder started, in the song (s)
         self._played = 0          # frames sent to the speakers since then
         self.stop_at: float | None = None  # "play it for 15 seconds": pause at this point in the song
+        self.heard = 0            # frames of THIS song that reached the speakers (seeks/pauses don't add)
 
     @property
     def active(self) -> bool:
@@ -48,6 +49,8 @@ class _Player:
 
     def play(self, track: dict, start_at: float = 0.0) -> None:
         self.stop()
+        if (self.track or {}).get("id") != track.get("id"):  # a new song, not a seek / fresh link of this one
+            self.heard = 0
         self._stop.clear()
         self.paused.clear()
         self.track, self.start_at, self._played = track, max(0.0, start_at), 0
@@ -70,6 +73,16 @@ class _Player:
         if self._thread is not None and self._thread is not threading.current_thread():
             self._thread.join(timeout=3)
         self._thread = None
+        self._log_heard()
+
+    def _log_heard(self) -> None:
+        """How much of the song was listened to - taste counts it only past half (youtube_taste)."""
+        if self.track and self.heard:
+            try:
+                from assistant.tools import youtube_taste
+                youtube_taste.heard(self.track["id"], self.heard / _RATE, self.track.get("duration") or 0)
+            except Exception:
+                pass  # history is a nice-to-have
 
     def _callback(self, outdata, frames, _time, _status):
         with self.lock:
@@ -81,6 +94,7 @@ class _Player:
             outdata[n:] = 0
             self._buf = self._buf[n:]
             self._played += n
+            self.heard += n
             if self.stop_at is not None and self.position >= self.stop_at:
                 self.stop_at = None
                 self.paused.set()  # "play 15 seconds" done - paused, so "resume" carries on
@@ -114,6 +128,7 @@ class _Player:
                     time.sleep(0.1)  # let the last of the song play out
                 finished = not self._stop.is_set()
             container.close()
+            self._log_heard()
         except Exception as exc:
             from assistant import interaction_log
             interaction_log.log_error("music", exc, title=track.get("title"))
@@ -258,7 +273,7 @@ def _spoken(title: str) -> str:
 
 def _remember(track: dict) -> None:
     from assistant.tools import youtube_taste
-    youtube_taste.record(track["id"], track["title"], track.get("channel", ""))
+    youtube_taste.record(track["id"], track["title"], track.get("channel", ""), track.get("duration") or 0)
 
 
 def _play_first(candidates: list[dict], seconds: float | None = None) -> dict:

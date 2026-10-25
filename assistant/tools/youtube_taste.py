@@ -39,7 +39,7 @@ _AGE = [(r"(\d+)\s*(?:hours?|hrs?|h)\b", "h"), (r"(\d+)\s*(?:days?|d)\b", "d"), 
 
 # --- history ----------------------------------------------------------------------
 
-def record(video_id: str, title: str, channel: str) -> bool:
+def record(video_id: str, title: str, channel: str, duration: float = 0) -> bool:
     """Log a watched video; False if it's the same as the last one logged."""
     if not video_id or not title:
         return False
@@ -50,8 +50,27 @@ def record(video_id: str, title: str, channel: str) -> bool:
         HISTORY_PATH.parent.mkdir(parents=True, exist_ok=True)
         with HISTORY_PATH.open("a", encoding="utf-8") as f:
             f.write(json.dumps({"ts": datetime.now().isoformat(timespec="seconds"), "id": video_id, "title": title,
-                                "channel": channel or ""}, ensure_ascii=False) + "\n")
+                                "channel": channel or "", "duration": round(duration or 0), "heard": 0},
+                               ensure_ascii=False) + "\n")
     return True
+
+
+def heard(video_id: str, seconds: float, duration: float = 0) -> None:
+    """How long it was actually played, kept on its latest row (the most seen, so repeated calls are safe)."""
+    with _lock:
+        rows = history()
+        row = next((r for r in reversed(rows) if r.get("id") == video_id), None)
+        if row is None or (seconds <= row.get("heard", 0) and (row.get("duration") or not duration)):
+            return
+        row["heard"] = round(max(seconds, row.get("heard", 0)))
+        row["duration"] = row.get("duration") or round(duration)
+        HISTORY_PATH.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows), encoding="utf-8")
+
+
+def _played_half(row: dict) -> bool:
+    """User's rule (2026-10-25): only what was played at least half its length counts toward taste - 10 s of a
+    1-minute song is a skip, not a like. Rows from before this (no play time) don't count either."""
+    return bool(row.get("duration")) and row.get("heard", 0) >= row["duration"] / 2
 
 
 def history(n: int | None = None) -> list[dict]:
@@ -80,6 +99,8 @@ def profile(now: float | None = None) -> tuple[Counter, Counter]:
     now = now or time.time()
     channels, topics = Counter(), Counter()
     for row in history(2000):
+        if not _played_half(row):
+            continue
         try:
             age_days = (now - datetime.fromisoformat(row["ts"]).timestamp()) / 86400
         except (KeyError, ValueError):
@@ -184,8 +205,11 @@ if __name__ == "__main__":
     assert match("syncing in stand up comedy by pranav sharma", recs)[0]["id"] == "a"
     assert match("the one posted 12 hours ago", recs)[0]["id"] == "a"
     assert ordinal("second video") == 2 and ordinal("the 3") == 3 and ordinal("pranav sharma") is None
-    record("c", "OG Crew vlog 1", "OG Crew")
-    assert rank(recs)[0]["id"] == "c" or rank(recs)[-1]["id"] == "c"  # watched: last
-    record("x", "OG Crew vlog 2", "OG Crew")
-    assert [r["id"] for r in rank(recs)][-1] == "c"
+    record("c", "OG Crew vlog 1", "OG Crew", duration=60)
+    assert rank(recs)[-1]["id"] == "c"  # watched: last
+    record("x", "OG Crew vlog 2", "OG Crew", duration=60)
+    heard("x", 10)
+    assert not profile()[0]  # 10 s of a 1-min video: a skip, not taste
+    heard("x", 30)
+    assert profile()[0]["og crew"] > 0 and [r["id"] for r in rank(recs)][-1] == "c"
     print("ok")

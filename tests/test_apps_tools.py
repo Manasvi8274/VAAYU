@@ -213,3 +213,37 @@ def test_only_the_apps_own_windowless_processes_are_counted_as_its(monkeypatch):
     assert not apps._is_part_of(2, {100}, store_app=True)     # a Windows service that happened to start
     assert apps._is_part_of(3, {100}, store_app=True)         # a Store app's own process
     assert not apps._is_part_of(3, {100}, store_app=False)    # ...but only when a Store window opened
+
+
+def test_a_moved_game_opens_from_where_it_is_now_and_a_deleted_one_is_said_plainly(monkeypatch, tmp_path):
+    # App sweep: AC Shadows' shortcut pointed to E:\shadows\Assassin Creed Shadows\ACShadows.exe but the game
+    # is in E:\Assassin Creed Shadows - Windows' "Problem with Shortcut" box popped and the open hung on it.
+    from assistant.tools import apps
+    game = tmp_path / "Assassin Creed Shadows" / "ACShadows.exe"
+    game.parent.mkdir()
+    game.write_text("")
+    real_moved = apps._moved
+    monkeypatch.setattr(apps, "_moved", lambda target: real_moved(target, drive=tmp_path))
+    launched = []
+    monkeypatch.setattr(apps.subprocess, "Popen", lambda cmd, cwd=None: launched.append(cmd))
+    monkeypatch.setattr(apps, "_start_menu_apps", lambda: {
+        "Play Assassin Creed Shadows": str(tmp_path / "shadows" / "Assassin Creed Shadows" / "ACShadows.exe"),
+        "God of War Ragnarok": str(tmp_path / "Games" / "God of War Ragnarok" / "GoWR.exe"),
+        "Notepad": "Microsoft.WindowsNotepad_8wekyb3d8bbwe!App"})
+    assert apps._real_open_shortcut_target("assassin creed shadows") == "Play Assassin Creed Shadows"
+    assert launched == [[str(game)]]
+    with pytest.raises(RuntimeError, match="isn't on this laptop any more"):
+        apps._real_open_shortcut_target("god of war ragnarok")
+    assert apps._real_open_shortcut_target("notepad") is None  # a normal entry: opened the usual way
+    assert len(launched) == 1
+
+
+@pytest.mark.parametrize("said, want", [
+    ("force close notepad", {"app_name": "notepad", "force": True}),
+    ("close notepad forcefully", {"app_name": "notepad", "force": True}),
+    ("notepad zabardasti band karo", {"app_name": "notepad", "force": True}),
+    ("close notepad", {"app_name": "notepad"}),  # never forced unless said - a save prompt is the user's call
+])
+def test_force_close_only_when_said(said, want):
+    from assistant.llm import router
+    assert router.fast_route(said) == ("tools", [("close_app", want)])

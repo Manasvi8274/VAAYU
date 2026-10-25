@@ -207,3 +207,20 @@ def test_a_song_the_user_paused_stays_paused_after_vaayu_talks(playing, monkeypa
 ])
 def test_volume_means_the_speakers_unless_the_song_is_named(text, want):
     assert router.fast_route(text) == ("tools", [want])
+
+
+def test_what_reached_the_speakers_is_logged_as_heard_on_stop(monkeypatch):
+    # Recommendations count a song only if at least half of it was heard (user's rule).
+    import numpy as np
+    from assistant.tools import youtube_taste
+    logged = []
+    monkeypatch.setattr(youtube_taste, "heard", lambda vid, s, d=0: logged.append((vid, round(s), d)))
+    p = music._Player()
+    p.track = {"id": "k", "title": "Kesariya", "duration": 60}
+    p.start_at = 40.0  # a seek ahead is not listening
+    p._buf = np.ones((music._RATE * 3, 2), np.float32)
+    out = np.zeros((music._RATE, 2), np.float32)
+    for _ in range(3):
+        p._callback(out, music._RATE, None, None)
+    p.stop()
+    assert logged == [("k", 3, 60)]
