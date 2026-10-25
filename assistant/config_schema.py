@@ -30,6 +30,10 @@ class ListeningConfig(BaseModel):
 
 class TTSConfig(BaseModel):
     rate: int = 210  # pyttsx3 words-per-minute; 210 = 1.2x the original 175 default
+    engine: str = "kokoro"  # "kokoro" (natural voice, models/kokoro) or "pyttsx3" (Windows' built-in voice)
+    voice: str = "hm_psi"  # Kokoro voice - hm_psi: Indian male; bm_george: British male; af_heart: US female
+    speed: float = 1.05
+    device: str = "auto"  # Kokoro on the GPU when there's room, else the CPU
 
 
 class STTConfig(BaseModel):

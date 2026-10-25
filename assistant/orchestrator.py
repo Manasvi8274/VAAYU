@@ -182,6 +182,20 @@ def _media_playing() -> bool:
         return False
 
 
+def _make_tts(cfg):
+    """Kokoro if configured and its files load, else Windows' built-in voice - never no voice."""
+    if cfg.engine == "kokoro":
+        try:
+            from assistant.tts.kokoro_engine import KokoroEngine
+            engine = KokoroEngine(voice=cfg.voice, speed=cfg.speed, device=cfg.device)
+            print(f"Vaayu: Kokoro voice '{cfg.voice}' on the {engine.device}.")
+            return engine
+        except Exception as exc:
+            print(f"Vaayu: Kokoro voice unavailable ({exc}) - using the Windows voice.")
+            interaction_log.log_error("tts_init", exc)
+    return Pyttsx3Engine(rate=cfg.rate)
+
+
 class State(Enum):
     SLEEPING = "sleeping"
     AWAKE = "awake"
@@ -210,7 +224,7 @@ class Orchestrator:
 
         self.stt = WhisperSTT(model_size=config.stt.whisper_model_size, language=config.stt.language,
                               device=config.stt.device)
-        self.tts = Pyttsx3Engine(rate=config.tts.rate)
+        self.tts = _make_tts(config.tts)
         self.brain = OllamaBrain(host=config.llm.host, model=config.llm.model)
         self.messages = [{"role": "system", "content": SYSTEM_PROMPT}]
         self._name_window_until = 0.0
@@ -449,7 +463,8 @@ class Orchestrator:
             )
         interaction_log.log_event("start", model=self.config.llm.model, mode=self.config.activation.mode,
                                   stt_model=self.config.stt.whisper_model_size,
-                                  stt_device=getattr(self.stt, "device", "?"))
+                                  stt_device=getattr(self.stt, "device", "?"),
+                                  tts=type(self.tts).__name__, tts_device=getattr(self.tts, "device", "cpu"))
         try:
             while not self.should_exit:
                 try:

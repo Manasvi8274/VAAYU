@@ -199,3 +199,14 @@ def _no_real_start_menu_launch():
         mp.setattr(apps, "_real_open_from_start_menu", apps._open_from_start_menu, raising=False)
         mp.setattr(apps, "_open_from_start_menu", lambda name: None)
         yield
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _no_real_kokoro():
+    # Loading Kokoro takes the GPU (~1.1 GB) and a few seconds - tests use the plain voice engine.
+    from assistant import orchestrator
+    from assistant.tts.pyttsx3_engine import Pyttsx3Engine
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(orchestrator, "_real_make_tts", orchestrator._make_tts, raising=False)
+        mp.setattr(orchestrator, "_make_tts", lambda cfg: Pyttsx3Engine(rate=cfg.rate))
+        yield
