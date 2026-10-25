@@ -18,6 +18,7 @@ the router: their score is the honest "wording it has never seen" number.
     python scripts/youtube_command_suite.py --misses   # also list misses
 """
 
+import re
 import random
 import sys
 from collections import defaultdict
@@ -168,7 +169,10 @@ INTENTS = {
                      lambda v: [("open_website", {"url_or_query": "youtube.com"})]),
     "play_on_youtube": ([("play {v} on youtube", 0), ("youtube pe {v} chalao", 0), ("put on {v} on youtube", 0),
                          ("youtube par {v} lagao", H), ("play {v} on youtube please", H)],
-                        lambda v: [("play_video_on_youtube", {"query": v})]),
+                        # User's rule (2026-10-25): a SONG plays through Vaayu's speakers, even with "youtube"
+                        # in the sentence; only a video goes to YouTube in Brave.
+                        lambda v: [("play_music" if re.search(r"\b(?:song|songs|music|gaana|gaane)\b", v)
+                                    else "play_video_on_youtube", {"query": v})]),
     "latest_from_channel": ([("play the latest video from {v}", 0), ("{v} ka latest video chalao", 0),
                              ("play the newest video from {v}", 0), ("play {v}'s latest video", H),
                              ("play the most recent video from {v}", H), ("{v} ka naya video chalao", H)],

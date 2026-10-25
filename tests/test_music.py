@@ -139,3 +139,32 @@ def test_this_song_question_uses_the_playing_title(playing, monkeypatch):
     monkeypatch.setattr("assistant.tools.web_answer.answer_question", lambda q: asked.append(q) or {"results": []})
     music.ask_about_song("which movie is this song from")
     assert asked == ['which movie is the song "Kesariya" from']
+
+
+@pytest.mark.parametrize("text, tool", [
+    ("play the song tu meri", "play_music"), ("play tu meri", "play_music"), ("tu meri gaana chalao", "play_music"),
+    ("play kesariya song on youtube", "play_music"),  # said "song": the speakers, even with "youtube"
+    ("play kesariya video", "play_video_on_youtube"), ("play the video of kesariya", "play_video_on_youtube"),
+    ("kesariya ka video chalao", "play_video_on_youtube"), ("play kesariya on youtube", "play_video_on_youtube"),
+])
+def test_song_means_speakers_video_means_brave(text, tool):
+    assert router.fast_route(text)[1][0][0] == tool
+
+
+def test_the_model_choosing_youtube_for_a_song_is_rerouted_to_the_speakers(monkeypatch):
+    # Real log: "...hollywood song starred by rintik roshan" -> the LLM chose play_video_on_youtube -> failed.
+    from unittest.mock import MagicMock
+    from assistant.llm.ollama_client import OllamaBrain
+    from assistant.tools.registry import registry
+    played = []
+    monkeypatch.setattr(music, "play_music", lambda query, seconds=None: played.append(query) or "Playing it.")
+    monkeypatch.setitem(registry._tools["play_music"].__dict__, "func", music.play_music)
+    with patch("assistant.llm.ollama_client.ollama.Client"):
+        brain = OllamaBrain(host="http://fake", model="m")
+    brain.client = MagicMock()
+    brain.client.chat.return_value = {"message": {"role": "assistant", "content": "", "tool_calls": [
+        {"function": {"name": "play_video_on_youtube", "arguments": {"query": "bank bike movie song rintik roshan"}}}]}}
+    reply, _ = brain.respond([{"role": "user", "content": "From bank bike movie hollywood song starred by rintik roshan."}],
+                             registry, confirm=lambda n, a: True)
+    assert played == ["bank bike movie song rintik roshan"]
+    assert any("rerouted" in t for t in brain.trace)

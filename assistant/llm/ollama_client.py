@@ -202,6 +202,14 @@ def _now_line() -> str:
             "question about today's date, day or time - never guess it.")
 
 
+def _with_tool(registry: ToolRegistry, name: str) -> ToolRegistry:
+    """The registry the call goes to, with `name` in it - the LLM loop only offers a top-5 subset."""
+    if name in registry._tools:
+        return registry
+    from assistant.tools.registry import registry as full
+    return full
+
+
 def _with_now(messages: list[dict]) -> list[dict]:
     """messages with the clock added to the system prompt, for this call only (history stays clean)."""
     if messages and messages[0].get("role") == "system":
@@ -255,11 +263,16 @@ class OllamaBrain:
         self.trace: list[dict] = []
 
     def _dispatch(self, registry: ToolRegistry, name: str, arguments: dict, path: str) -> dict:
+        routed = router.speakers_or_browser(name, arguments, getattr(self, "_user_text", ""))
+        if routed[0] != name:  # the model picked YouTube for a song (real log) - songs play through the speakers
+            self.trace.append({"path": path, "rerouted": {"from": name, "to": routed[0]}})
+            name, arguments = routed
+            registry = _with_tool(registry, name)
         heard = arguments
         arguments = names.correct_arguments(name, arguments)  # "Ogru" -> "OG Crew" (see tools/names.py)
         if arguments != heard:
             self.trace.append({"path": path, "name_corrected": {"from": heard, "to": arguments}})
-        result = registry.dispatch(name, arguments)
+        result = _with_tool(registry, name).dispatch(name, arguments)
         self.trace.append({"path": path, "tool": name, "args": arguments, "ok": bool(result.get("ok")),
                            "result" if result.get("ok") else "error": str(result.get("result" if result.get("ok") else "error"))})
         return result
@@ -368,6 +381,7 @@ class OllamaBrain:
             if m.get("role") == "user":
                 last_user_text = m.get("content", "")
                 break
+        self._user_text = last_user_text  # for _dispatch's song -> speakers rule
 
         if self.fast_paths:
             routed = router.fast_route(last_user_text)
@@ -476,7 +490,7 @@ class OllamaBrain:
                 if identical_retries > 1:
                     return last_failure_reply, messages
 
-            if tool_registry.requires_confirmation(name) and not confirm(name, arguments):
+            if _with_tool(tool_registry, name).requires_confirmation(name) and not confirm(name, arguments):
                 tool_result = {"ok": False, "error": "User declined to confirm this action."}
                 self.trace.append({"path": "llm", "tool": name, "args": arguments, "declined": True})
                 last_action_failed = False  # declining is a normal outcome, not a failure to correct

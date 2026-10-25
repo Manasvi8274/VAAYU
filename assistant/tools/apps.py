@@ -120,6 +120,35 @@ def _open_browser_with_automation(app_name: str, foreground: bool) -> str | None
     return f"Opened {label}." + ("" if foreground else " (in the background)")
 
 
+def ensure_browser(app_name: str = "brave") -> str:
+    """A browser Vaayu can drive, for videos: already controllable -> nothing to do; not running -> start it
+    with the control port; running WITHOUT the port (opened by the user) -> close it and reopen it with the
+    port, restoring its tabs. Real log: "play ... video" kept failing with "it has to be opened by me".
+    Returns a note for the reply ("" when nothing had to happen)."""
+    if _cdp_up():
+        return ""
+    key = _CHROMIUM_NAMES.get(app_name.strip().lower())
+    exe = browser_state._enumerate_registered_browsers().get(key) if key else None
+    if not exe:
+        raise RuntimeError(f"I can't find {app_name} on this laptop.")
+    procs = [p for p in psutil.process_iter() if _proc_exe(p) == exe.lower()]
+    if procs:
+        # A normal close (not /F): Brave saves its session first, so --restore-last-session brings the tabs back.
+        subprocess.run(["taskkill", "/IM", exe.split("\\")[-1]], capture_output=True,
+                       creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        psutil.wait_procs(procs, timeout=8)
+        subprocess.Popen([exe, "--remote-debugging-port=9222", "--restore-last-session"])
+    else:
+        subprocess.Popen([exe, "--remote-debugging-port=9222"])
+    for _ in range(40):
+        if _cdp_up():
+            browser_state.note_app_opened(app_name)
+            return (f" (I restarted {key.title()} so I can control it - your tabs are back.)" if procs
+                    else f" (Opened {key.title()}.)")
+        time.sleep(0.25)
+    raise RuntimeError(f"I opened {key.title()} but couldn't get control of it - try again in a moment.")
+
+
 def _launch_with_port(exe: str) -> None:
     subprocess.Popen([exe, "--remote-debugging-port=9222"])
     for _ in range(20):  # up to 5 s for the port, so the next step (open YouTube...) can use it

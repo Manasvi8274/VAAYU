@@ -91,7 +91,7 @@ def test_personal_local_and_math_questions_stay_offline(text):
 @pytest.mark.parametrize("text, tool", [
     ("search for weather in delhi", "open_website"),  # an explicit search still opens the browser
     ("what is playing", "youtube_control"), ("what's my battery percentage", "get_system_status"),
-    ("which wifi am I on", "get_network_status"), ("play rain songs on youtube", "play_video_on_youtube"),
+    ("which wifi am I on", "get_network_status"), ("play rain songs on youtube", "play_music"),
 ])
 def test_local_rules_still_win(text, tool):
     assert router.fast_route(text)[1][0][0] == tool

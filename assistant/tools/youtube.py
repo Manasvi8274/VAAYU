@@ -157,6 +157,8 @@ def _find_first_video_url(tab: dict, exclude_shorts: bool = True) -> str | None:
     },
 )
 def play_latest_video_from_channel(channel_name: str, new_tab: bool = False) -> str:
+    from assistant.tools.apps import ensure_browser
+    ensure_browser("brave")
     tab = _resolve_target_tab(new_tab)
     channel_url = cache.get(_CHANNEL_CACHE_NAMESPACE, channel_name, _CHANNEL_CACHE_MAX_AGE_SECONDS)
     from_cache = channel_url is not None
@@ -198,16 +200,12 @@ def play_latest_video_from_channel(channel_name: str, new_tab: bool = False) -> 
 @registry.register(
     name="play_video_on_youtube",
     description=(
-        "Searches YouTube for the given query and plays the first matching video - use this for "
-        "ANY 'play <song/music/artist/genre>' request, whether or not the user says the word "
-        "'youtube' (e.g. 'play fairytale music', 'play some lofi', 'play Ed Sheeran'), as long as "
-        "it isn't about a specific channel's latest video (use play_latest_video_from_channel for "
-        "that instead). This is the correct tool for playing music/songs in general - reuses the "
-        "current browser tab by default; pass new_tab=true if the user says 'in a new tab'/'in "
-        "another tab' - do not fall back to open_website for that phrasing, this tool handles it "
-        "directly. Construct a good search query yourself: for a genre ('bollywood songs', "
-        "'hollywood songs') search that genre plus 'songs' or 'hits'; for an artist, search their "
-        "name plus 'songs'; for a specific song, search the song name (plus artist if known)."
+        "Plays a VIDEO on YouTube in the Brave browser: searches YouTube for the query and plays the "
+        "first match. Use it only when the user says 'video' (or explicitly asks for YouTube / the "
+        "browser). For a song, music, gaana or an artist's songs use play_music instead - that plays "
+        "through Vaayu's own speakers with no browser. Not for a channel's latest video "
+        "(play_latest_video_from_channel). Reuses the current tab; new_tab=true if the user says 'in a "
+        "new tab'. Use the user's own words as the query."
     ),
     parameters={
         "type": "object",
@@ -228,6 +226,8 @@ def play_latest_video_from_channel(channel_name: str, new_tab: bool = False) -> 
     },
 )
 def play_video_on_youtube(query: str, new_tab: bool = False) -> str:
+    from assistant.tools.apps import ensure_browser
+    note = ensure_browser("brave")  # videos play in Brave - open it, or take it over, if needed
     tab = _resolve_target_tab(new_tab)
     _navigate(f"https://www.youtube.com/results?search_query={quote_plus(query)}", tab)
     video_url = _find_first_video_url(tab)
@@ -236,4 +236,4 @@ def play_video_on_youtube(query: str, new_tab: bool = False) -> str:
 
     _navigate(video_url, tab)
     _remember(tab)
-    return f"Playing on YouTube: {query}" + (" (new tab)." if new_tab else "")
+    return f"Playing on YouTube: {query}" + (" (new tab)." if new_tab else "") + note

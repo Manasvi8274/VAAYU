@@ -109,7 +109,8 @@ def build_cases():
         template = r.choice(["play {s} on youtube", "youtube pe {s} chalao", "play {s}",
                              "put on {s} on youtube", "youtube par {s} lagao"])
         # A bare "play <song>" plays through the speakers now, no browser (user's request, 2026-10-25)
-        tool = "play_video_on_youtube" if "youtube" in template else "play_music"
+        # ...and a "song"/"music" one goes to the speakers even when "youtube" is said - only videos use Brave
+        tool = "play_video_on_youtube" if "youtube" in template and not re.search(r"\b(?:songs?|music)\b", s) else "play_music"
         c.append(case("youtube", template.format(s=s), tool, query=s.split()[0]))
     for ch in ["MrBeast", "Carryminati", "OG Crew", "Dhruv Rathee", "Technical Guruji", "BB Ki Vines", "T-Series",
                "Mortal", "Total Gaming", "Ranveer Allahbadia"]:
@@ -286,7 +287,7 @@ def build_holdout():
         ("lock it up", "lock_computer", {}), ("minimise this", "minimize_window", {}),
         ("what's the time right now", None, {}), ("aaj kaunsa din hai", None, {}),
         ("play arijit singh on youtube", "play_video_on_youtube", {"query": "arijit"}),
-        ("youtube par coke studio songs chalao", "play_video_on_youtube", {"query": "coke"}),
+        ("youtube par coke studio songs chalao", "play_music", {"query": "coke"}),  # relabelled: songs -> speakers (user rule)
         ("play the latest video from Linus Tech Tips", "play_latest_video_from_channel", {"channel_name": "linus"}),
         ("Samay Raina ka naya video chalao", "play_latest_video_from_channel", {"channel_name": "samay"}),
         ("pause the youtube video", "control_video_playback", {}), ("go fullscreen", "set_video_fullscreen", {"fullscreen": "true"}),

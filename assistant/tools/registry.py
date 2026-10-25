@@ -85,6 +85,10 @@ class ToolRegistry:
         # rather than letting an unexpected kwarg crash the call.
         filtered_arguments = repair_arguments(spec, arguments)
 
+        missing = [a for a in spec.parameters.get("required", []) if a not in filtered_arguments]
+        if missing:  # real log: "That didn't work - open_app() missing 1 required positional argument: 'app_name'"
+            what = missing[0].replace("_name", "").replace("_", " ")
+            return {"ok": False, "error": f"I'm not sure which {what} you mean - say it again with the name."}
         try:
             result = spec.func(**filtered_arguments)
             return {"ok": True, "result": result}

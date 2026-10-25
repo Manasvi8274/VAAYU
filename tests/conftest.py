@@ -253,3 +253,14 @@ def _isolated_knowledge(tmp_path_factory):
         mp.setattr(research, "_real_start", research.start, raising=False)
         mp.setattr(research, "start", lambda config, client: None)
         yield
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _no_real_browser_takeover():
+    # ensure_browser starts, or CLOSES AND REOPENS, the user's real Brave. Found the hard way: without
+    # this stub one test run launched Brave on the user's desktop.
+    from assistant.tools import apps
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(apps, "_real_ensure_browser", apps.ensure_browser, raising=False)
+        mp.setattr(apps, "ensure_browser", lambda app_name="brave": "")
+        yield

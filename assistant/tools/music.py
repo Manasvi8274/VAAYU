@@ -117,6 +117,12 @@ class _Player:
         except Exception as exc:
             from assistant import interaction_log
             interaction_log.log_error("music", exc, title=track.get("title"))
+            # Real log: "403 Forbidden" halfway through - YouTube's stream link expired. Get a fresh link
+            # and carry on from the same second (twice at most, so a dead song can't loop forever).
+            if not self._stop.is_set() and track.get("_retries", 0) < 2:
+                resume_at = self.position
+                threading.Thread(target=_resume_fresh, args=(track, resume_at), daemon=True).start()
+                return
         finally:
             with self.lock:
                 self._buf = np.zeros((0, _CHANNELS), np.float32)
@@ -125,6 +131,18 @@ class _Player:
 
 
 player = _Player()
+
+
+def _resume_fresh(track: dict, at: float) -> None:
+    try:
+        fresh = _resolve(track) | {"_retries": track.get("_retries", 0) + 1}
+        stop_at, paused = player.stop_at, player.paused.is_set()
+        player.play(fresh, start_at=at)
+        player.stop_at = stop_at
+        if paused:
+            player.paused.set()
+    except Exception:
+        pass
 
 
 def _autoplay_next() -> None:

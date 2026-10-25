@@ -172,7 +172,7 @@ _YT_RULES = [
      r"recommend(?:ed|ations?)|suggest(?:ed|ions?)|up next)\b.*$|"
      r"^(?:recommendations?|suggestions?|right side) (?:me|mein|se) (?:se )?(?P<d2>.+?) (?:wala|wali|wale)? ?(?:video )?"
      r"(?:chalao|lagao|kholo)$|"
-     r"^(?:play|open)(?: the)? video (?!(?:in|on|from|again|at|now|for|to|full|ko)\b)(?P<d3>\S+(?: \S+)+)$",
+     r"^(?:play|open)(?: the)? video (?!(?:in|on|from|again|at|now|for|to|full|ko|of|called|named|about)\b)(?P<d3>\S+(?: \S+)+)$",
      lambda m: _yt("play_recommended", (m.group("d") or m.group("d2") or m.group("d3")).strip())),
 ]
 _YT_RULES = [(re.compile(p, re.I), build) for p, build in _YT_RULES]
@@ -612,6 +612,10 @@ def _route_one(t: str):
     if m := _CHANNEL_VIDEO.match(t):
         name = (m.group("c") or m.group("c2") or m.group("c3")).strip()
         return ("tool", "play_latest_video_from_channel", {"channel_name": name})
+    if (m := _VIDEO_OF.match(t)) and not _CHANNEL_HINT.search(t):  # "play kesariya video" -> YouTube in Brave
+        q = (m.group("q") or m.group("q2") or m.group("q3")).strip()
+        if not _THIS_ONE.match(q) and q.lower() not in ("next", "previous", "last", "first", "second", "third"):
+            return ("tool", "play_video_on_youtube", {"query": q})
     if (m := _YOUTUBE.match(t)) and not _CHANNEL_HINT.search(t):
         return ("tool", "play_video_on_youtube", {"query": m.group("q") or m.group("q2") or m.group("q3")})
     if m := _SITE_OPEN.match(t):
@@ -692,6 +696,22 @@ _PLAY_FOR = re.compile(r"^(?:play|bajao|chalao|sunao)(?: me)?(?: only| just)?(?P
                        re.I)
 _SONG_QUESTION = re.compile(r"(?:this|the current|current|that) (?:song|track|gaana)|(?:ye|yeh|is|iss) gaan[ae]|"
                             r"the song (?:that'?s|that is|you'?re) playing", re.I)
+# The user's rule (2026-10-25): "whenever I say song he should play it by his own speakers, and when I say
+# video he should use Brave". Real log: a song request went to YouTube in a browser that wasn't open.
+_SONG_WORD = re.compile(r"\b(?:song|songs|gaana|gaane|gana|music|track|bhajan|geet)\b", re.I)
+_VIDEO_WORD = re.compile(r"\b(?:video|videos|vlog|trailer|clip)\b", re.I)
+_VIDEO_OF = re.compile(r"^(?:play|open|show|chalao|lagao)(?: me)?(?: the)? (?:video|videos) (?:of|for|called|named) (?P<q>.+)$|"
+                       r"^(?:play|show|open)(?: me)?(?: the)? (?P<q2>.+?) (?:video|videos)(?: on youtube)?$|"
+                       r"^(?P<q3>.+?) (?:ka|ki|ke) (?:video|videos) (?:chalao|lagao|dikhao|play karo|chala do)$", re.I)
+
+
+def speakers_or_browser(name: str, args: dict, text: str) -> tuple[str, dict]:
+    """A YouTube-in-the-browser call for something the user called a SONG goes to the speakers instead."""
+    if name == "play_video_on_youtube" and _SONG_WORD.search(text) and not _VIDEO_WORD.search(text):
+        return "play_music", {"query": args.get("query", "")}
+    return name, args
+
+
 _THIS_ONE = re.compile(r"^(?:it|this|that|the song|this song|the music|the audio|the track|again)$", re.I)
 _HINDI_SONG = re.compile(r"\b(?:gaana|gaane|gana|song|songs)\b.{0,25}\b(?:chala do|chalao|bajao|baja do|sunao|suna do|"
                          r"laga do|lagao)\b", re.I)
@@ -731,10 +751,10 @@ def fast_route(text: str):
             calls = [c for i, c in enumerate(calls) if not (
                 c == ("open_website", {"url_or_query": "youtube.com"}) and i + 1 < len(calls)
                 and calls[i + 1][0] == "play_video_on_youtube")]
-            return ("tools", calls)
+            return ("tools", [speakers_or_browser(n, a, t) for n, a in calls])
     one = _route_one(t)
     if one:
-        return one if one[0] == "reply" else ("tools", _calls(one))
+        return one if one[0] == "reply" else ("tools", [speakers_or_browser(n, a, t) for n, a in _calls(one)])
     return None
 
 
