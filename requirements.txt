@@ -64,3 +64,5 @@ indic-transliteration
 # model-files-v1.0: kokoro-v1.0.onnx + voices-v1.0.bin). CPU onnxruntime on purpose - its CUDA build
 # crashed Vaayu (three cuDNN copies in one process); see kokoro_engine.py. Without these: Windows' voice.
 kokoro-onnx
+# Songs through the speakers without a browser (assistant/tools/music.py); decoding uses PyAV, already here
+yt-dlp

@@ -633,7 +633,28 @@ def _route_one(t: str):
                 if "bg" in pattern.groupindex and m.group("bg"):
                     args["foreground"] = False
                 return ("tool", name, args)
+    # Songs through the speakers, no browser (tools/music.py) - "on youtube" / "video" still mean YouTube.
+    if m := _MUSIC.match(t):
+        q = next(g for g in m.groups() if g)
+        return ("tool", "play_music", {"query": q.strip()})
+    if (m := _PLAY_BARE.match(t)) and not _NOT_A_SONG.search(m.group("q")):
+        from assistant.tools import names
+        if not names.best_match(m.group("q"), "app"):  # "play tekken" is the game, not a song
+            return ("tool", "play_music", {"query": m.group("q").strip()})
     return None
+
+
+_MUSIC = re.compile(
+    r"^(?:play|bajao|chalao|sunao|lagao)(?: me| us)? (?P<q4>some music|music|some songs|a song|songs|koi gaana|kuch gaane)$|"
+    r"^(?:play|bajao|chalao|sunao|lagao|put on)(?: me| us)?(?: the| a| some| any)? (?:song|songs|music|gaana|gana|gaane)"
+    r"(?: of| by| from| called| named)? (?P<q>.+)$|"
+    r"^(?:play|put on)(?: me| us)?(?: the| a| some)? (?P<q2>.+?) (?:song|songs|music|gaana|gaane|track)$|"
+    r"^(?P<q3>.+?) (?:ka |ke |ki )?(?:song|songs|gaana|gaane|gana|music) (?:chalao|bajao|lagao|sunao|play karo|chala do|baja do)$",
+    re.I)
+_PLAY_BARE = re.compile(r"^(?:play|bajao|sunao) (?P<q>.{3,})$", re.I)
+_NOT_A_SONG = re.compile(r"\b(?:video|videos|youtube|channel|tab|it|this|that|next|previous|again|movie|film|trailer|"
+                         r"episode|game|match|result|one|first|second|third|last|from|at|speed|"
+                         r"latest|newest)\b", re.I)
 
 
 _SPLIT = re.compile(r"\s*,\s*(?:and |then |and then )?|\s+(?:and then|and also|and|then|after that|aur phir|aur fir|aur|phir|fir)\s+", re.I)
@@ -699,6 +720,8 @@ def _route_parts(parts: list[str]) -> list:
         # "open youtube and play kesariya": after YouTube, a bare "play X" means play it there.
         if r is None and youtube_open and (m := re.match(r"^(?:play|search|put on|chalao|lagao) (?P<q>.+)$", p, re.I)):
             r = ("tool", "play_video_on_youtube", {"query": m.group("q").strip()})
+        if r and youtube_open and r[0] == "tool" and r[1] == "play_music":  # they asked for YouTube - play it there
+            r = ("tool", "play_video_on_youtube", dict(r[2]))
         if r and r[0] == "tool" and r[1] == "open_app" and r[2]["app_name"].lower() == "whatsapp":
             whatsapp_open = True
         if r and r[0] == "tool" and "youtube" in str(r[2].get("url_or_query") or r[2].get("app_name") or "").lower():

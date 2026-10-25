@@ -33,7 +33,7 @@ def test_fast_route_hits(text, expected):
 @pytest.mark.parametrize(
     "text",
     [
-        "play something nice",  # no target to search for
+        # ("play something nice" now plays music by taste - tools/music.py)
         "open my notes file in documents",  # a file
         "close vaayu",  # the assistant itself, not an app
         "send it",  # no recipient/message to parse

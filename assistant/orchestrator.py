@@ -162,9 +162,10 @@ def _media_monitor() -> "_MediaMonitor":
 # straight to a player control (pause, volume, skip...). Video dialogue rarely
 # is one, and if it ever is, the worst case is a pause - everything else still
 # needs the name.
-_PLAYER_TOOLS = {"control_media", "youtube_control", "control_video_playback", "set_video_volume", "seek_video",
+_PLAYER_TOOLS = {"control_media", "youtube_control", "control_video_playback", "set_video_volume", "seek_video", "music_control",
                  "set_video_fullscreen"}
 _PLAYER_MAX_WORDS = 8
+_MUSIC_DUCK = 0.25  # music volume while Vaayu speaks over it
 
 
 def _is_player_command(text: str) -> bool:
@@ -269,6 +270,8 @@ class Orchestrator:
             barge = BargeIn(self.listener, self.stt, stop, text)
         if _monitor is not None:
             _monitor.suppress_until = float("inf")  # Vaayu's own voice isn't "media"
+        from assistant.tools import music
+        music.player.duck = _MUSIC_DUCK  # a song Vaayu is playing goes quiet while he talks
         try:
             if self.gui_queue is not None:
                 self.tts.speak_with_amplitude(
@@ -281,6 +284,7 @@ class Orchestrator:
             else:
                 self.tts.speak(text)
         finally:
+            music.player.duck = 1.0
             if barge:
                 barge.close()
             if _monitor is not None:

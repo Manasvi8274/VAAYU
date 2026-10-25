@@ -106,9 +106,11 @@ def build_cases():
              "bollywood party songs", "believer by imagine dragons", "tum hi ho", "hollywood songs", "old hindi songs",
              "punjabi songs", "workout music", "naatu naatu", "blinding lights by the weeknd", "relaxing piano music"]
     for s in songs:
-        c.append(case("youtube", r.choice(["play {s} on youtube", "youtube pe {s} chalao", "play {s}",
-                                           "put on {s} on youtube", "youtube par {s} lagao"]).format(s=s),
-                      "play_video_on_youtube", query=s.split()[0]))
+        template = r.choice(["play {s} on youtube", "youtube pe {s} chalao", "play {s}",
+                             "put on {s} on youtube", "youtube par {s} lagao"])
+        # A bare "play <song>" plays through the speakers now, no browser (user's request, 2026-10-25)
+        tool = "play_video_on_youtube" if "youtube" in template else "play_music"
+        c.append(case("youtube", template.format(s=s), tool, query=s.split()[0]))
     for ch in ["MrBeast", "Carryminati", "OG Crew", "Dhruv Rathee", "Technical Guruji", "BB Ki Vines", "T-Series",
                "Mortal", "Total Gaming", "Ranveer Allahbadia"]:
         c.append(case("youtube_channel", r.choice(["play the latest video from {c}", "play {c}'s newest video",

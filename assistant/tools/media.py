@@ -122,6 +122,9 @@ def control_media(action: str, level: int | None = None) -> str:
         raise ValueError(f"Unknown media action '{action}'. Valid actions: {_ACTIONS}")
     if action == "volume_set" and level is None:
         raise ValueError("volume_set needs a level (0-100).")
+    from assistant.tools import music
+    if music.player.active:  # a song Vaayu is playing himself (no browser): pause/next/volume go to it
+        return music.control(action, level)
     on_youtube = _on_youtube(action, level)
     if on_youtube:
         return on_youtube
