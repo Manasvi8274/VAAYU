@@ -150,6 +150,26 @@ def remove(kind: str, ids) -> int:
         return len(rows) - len(keep)
 
 
+def consolidate(kind: str, near: float = 0.92, max_age_days: float | None = None) -> tuple[int, int]:
+    """Build plan's weekly consolidation: near-duplicates merged (the newest wording kept) and rows older
+    than max_age_days dropped. Returns (merged, dropped)."""
+    with _lock:
+        rows, mat = _load(kind)
+        keep, merged, dropped = [], 0, 0
+        # newest first; the same second: the later row is the newer one
+        for i in sorted(range(len(rows)), key=lambda i: (rows[i].get("ts", ""), i), reverse=True):
+            if max_age_days is not None and age_hours(rows[i]) > max_age_days * 24:
+                dropped += 1
+            elif keep and float(np.max(mat[keep] @ mat[i])) >= near:
+                merged += 1
+            else:
+                keep.append(i)
+        if merged or dropped:
+            keep.sort()
+            _write(kind, [rows[i] for i in keep], mat[keep] if keep else np.zeros((0, mat.shape[1]), np.float32))
+        return merged, dropped
+
+
 def age_hours(row: dict) -> float:
     try:
         return (time.time() - datetime.fromisoformat(row["ts"]).timestamp()) / 3600

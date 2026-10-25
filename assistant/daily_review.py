@@ -337,6 +337,11 @@ def run_review(trigger: str = "manual", use_claude: bool | None = None) -> Path 
             updates = learn_locally(events, review_dir, stats["mentioned"])
         except Exception as exc:
             _log(review_dir, f"local update failed: {exc!r}")
+        try:
+            if note := consolidate_weekly():
+                updates.append(note)
+        except Exception as exc:
+            _log(review_dir, f"weekly consolidation failed: {exc!r}")
         if use_claude is None:
             try:
                 from assistant.config_schema import load_config
@@ -367,6 +372,30 @@ def run_review(trigger: str = "manual", use_claude: bool | None = None) -> Path 
         return review_dir
     finally:
         _lock.release()
+
+
+CONSOLIDATED = DATA / "reviews" / "last_consolidation.txt"
+CONSOLIDATE_EVERY_DAYS = 7
+# kind -> (how alike two rows must be to be the same thing, how old a row may get in days; None = forever)
+CONSOLIDATE = {"facts": (0.92, None),   # what Vaayu knows about the user: duplicates merged, never aged out
+               "notes": (0.90, 180)}    # the idle research loop's notes: stale after half a year
+
+
+def consolidate_weekly(today: str | None = None) -> str | None:
+    """Build plan's weekly consolidation of what Vaayu learned - once every 7 days, from the daily review."""
+    from assistant import knowledge
+    today = today or datetime.now().date().isoformat()
+    try:
+        last = datetime.fromisoformat(CONSOLIDATED.read_text(encoding="utf-8").strip()).date()
+        if (datetime.fromisoformat(today).date() - last).days < CONSOLIDATE_EVERY_DAYS:
+            return None
+    except (OSError, ValueError):
+        pass
+    done = {kind: knowledge.consolidate(kind, near, age) for kind, (near, age) in CONSOLIDATE.items()}
+    CONSOLIDATED.parent.mkdir(parents=True, exist_ok=True)
+    CONSOLIDATED.write_text(today, encoding="utf-8")
+    return "Weekly consolidation: " + "; ".join(f"{kind} - {m} duplicate(s) merged, {d} stale dropped"
+                                                for kind, (m, d) in done.items())
 
 
 def start_in_background(trigger: str) -> bool:

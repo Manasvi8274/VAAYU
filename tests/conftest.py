@@ -242,6 +242,9 @@ def _isolated_daily_review(tmp_path_factory):
         mp.setattr(daily_review, "claude_session", lambda review_dir, day: "Claude session stubbed in tests.")
         mp.setattr(daily_review, "_real_learn_locally", daily_review.learn_locally, raising=False)
         mp.setattr(daily_review, "learn_locally", lambda events, review_dir, mentioned: [])
+        mp.setattr(daily_review, "CONSOLIDATED", base / "reviews" / "last_consolidation.txt")
+        mp.setattr(daily_review, "_real_consolidate_weekly", daily_review.consolidate_weekly, raising=False)
+        mp.setattr(daily_review, "consolidate_weekly", lambda today=None: None)
         yield
 
 

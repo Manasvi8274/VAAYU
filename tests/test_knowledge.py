@@ -197,3 +197,25 @@ def test_research_thread_is_off_when_disabled():
     cfg = AppConfig()
     cfg.research.enabled = False
     assert research._real_start(cfg, MagicMock()) is None
+
+
+def test_weekly_consolidation_merges_duplicates_keeps_the_newest_and_drops_stale_notes(monkeypatch):
+    # Build plan: "merge duplicates, drop stale facts, compress notes" - once a week from the daily review.
+    import json as _json
+    from assistant import daily_review
+    kind = "consolidation_test"
+    knowledge.add(kind, "the user lives in gurugram", dedupe=1.01)
+    knowledge.add(kind, "the user lives in gurugram now", dedupe=1.01)  # near-duplicate, newer
+    knowledge.add(kind, "the user likes arijit singh songs", dedupe=1.01)
+    rows_path, _vec = knowledge._paths(kind)
+    rows = [_json.loads(x) for x in rows_path.read_text(encoding="utf-8").splitlines()]
+    rows[2]["ts"] = "2020-01-01T00:00:00"  # very old
+    rows_path.write_text("".join(_json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+    knowledge._cache.clear()
+    assert knowledge.consolidate(kind, near=0.8, max_age_days=180) == (1, 1)
+    assert [r["text"] for r in knowledge.all(kind)] == ["the user lives in gurugram now"]
+
+    monkeypatch.setattr(daily_review, "CONSOLIDATE", {kind: (0.8, None)})
+    assert daily_review._real_consolidate_weekly("2026-10-25").startswith("Weekly consolidation")
+    assert daily_review._real_consolidate_weekly("2026-10-28") is None  # not a week yet
+    assert daily_review._real_consolidate_weekly("2026-11-01") is not None
