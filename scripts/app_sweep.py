@@ -92,26 +92,29 @@ def sweep(only: list[str]) -> list[dict]:
         row["opened"] = bool(new)
         row["window"] = next(iter(new.values()), "")
         time.sleep(1.0)  # let the tracker (open_app's background look) see it too
-        tracked = apps._opened_pids(name)
-        if not new and not tracked:
-            row["note"] = row["note"] or "no new window (already open, or it opens in the tray)"
+        entry = apps._opened_entry(name)
+        if not entry:
+            row["note"] = row["note"] or "no new window of its own (already open, or it lives in the tray)"
             row["closed"] = None  # never close what the user already had open
         else:
+            import win32gui
             try:
                 row["close_reply"] = apps.close_app(name)
                 time.sleep(1.0)
-                still = [p for p in (set(new) | tracked) if psutil.pid_exists(p)]
-                row["closed"] = not still
-                if still:
-                    row["note"] = f"still running: {[psutil.Process(p).name() for p in still if psutil.pid_exists(p)]}"
+                left_windows = [h for h in entry["hwnds"] if win32gui.IsWindow(h) and win32gui.IsWindowVisible(h)]
+                left_procs = [p for p in entry["pids"] if psutil.pid_exists(p) and apps._proc_name(p) not in apps._SHARED_HOSTS]
+                row["closed"] = not left_windows and not left_procs
+                if not row["closed"]:
+                    row["note"] = f"still open: {len(left_windows)} window(s), {[apps._proc_name(p) for p in left_procs]}"
             except Exception as exc:
                 row["closed"] = False
                 row["note"] = f"close failed: {exc}"[:200]
-                for p in set(new) | tracked:  # tidy up so the next app starts clean
-                    try:
-                        psutil.Process(p).terminate()
-                    except psutil.Error:
-                        pass
+                for p in entry["pids"]:  # tidy up so the next app starts clean (never a shared Windows host)
+                    if apps._proc_name(p) not in apps._SHARED_HOSTS:
+                        try:
+                            psutil.Process(p).terminate()
+                        except psutil.Error:
+                            pass
         results.append(row)
         print(f"[{i}/{len(todo)}] {name}: opened {'yes' if row['opened'] else 'NO '} | "
               f"closed {'-' if row['closed'] is None else 'yes' if row['closed'] else 'NO '} | {row['note']}",

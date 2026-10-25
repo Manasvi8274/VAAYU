@@ -166,49 +166,83 @@ def _proc_exe(p) -> str:
 
 # --- what each open_app started, so close_app can close exactly that ---------------------------------
 # Closing by guessing a process name fails for many apps (Calculator runs as CalculatorApp.exe, a Steam
-# game as "TEKKEN 7.exe"...). Instead: the processes that appeared with a window right after the open.
-_OPENED: dict[str, set[int]] = {}
-_TRACK_SECONDS = 8.0   # how long after an open to look for its new windowed processes
+# game as "TEKKEN 7.exe"...). Instead: the WINDOWS that appeared right after the open, and their new
+# processes. Shared Windows hosts are never ended - a Store app's window belongs to ApplicationFrameHost,
+# which hosts every Store app (found in the app sweep: closing Calculator left it running, as it should).
+_OPENED: dict[str, dict] = {}   # app -> {"hwnds": set, "pids": set}
+_TRACK_SECONDS = 8.0   # how long after an open to look for its new windows
 _CLOSE_WAIT = 5.0      # how long a polite close (like clicking X) gets before the next step
+_SHARED_HOSTS = {"applicationframehost.exe", "runtimebroker.exe", "dllhost.exe", "svchost.exe", "explorer.exe",
+                 "conhost.exe", "sihost.exe", "taskhostw.exe", "searchhost.exe", "startmenuexperiencehost.exe",
+                 "shellexperiencehost.exe", "textinputhost.exe", "backgroundtaskhost.exe"}
 
 
 def _pids() -> set[int]:
     return set(psutil.pids())
 
 
-def _window_pids() -> set[int]:
+def _windows() -> dict[int, int]:
+    """Visible, titled top-level windows: hwnd -> pid."""
     import win32gui
     import win32process
-    pids = set()
+    found = {}
 
     def add(hwnd, _):
         if win32gui.IsWindowVisible(hwnd) and win32gui.GetWindowText(hwnd):
-            pids.add(win32process.GetWindowThreadProcessId(hwnd)[1])
+            found[hwnd] = win32process.GetWindowThreadProcessId(hwnd)[1]
     win32gui.EnumWindows(add, None)
-    return pids
+    return found
+
+
+def _window_pids() -> set[int]:
+    return set(_windows().values())
+
+
+def _proc_name(pid: int) -> str:
+    try:
+        return psutil.Process(pid).name().lower()
+    except psutil.Error:
+        return ""
 
 
 def _track_opened(app_name: str, before: set[int]) -> None:
+    before_windows = set(_windows())
+
     def run():
-        deadline, found = time.time() + _TRACK_SECONDS, set()
+        deadline, key = time.time() + _TRACK_SECONDS, app_name.strip().lower()
+        hwnds, pids = set(), set()
         while time.time() < deadline:
             time.sleep(0.5)
-            new = _pids() - before
-            windowed = new & _window_pids()
-            if windowed:
-                found |= windowed
-                for pid in list(windowed):  # with their child processes (helpers, renderers)
+            new_pids = _pids() - before
+            for hwnd, pid in _windows().items():
+                # a new window - of a new process, or of a shared host (a Store app's frame)
+                if hwnd not in before_windows and (pid in new_pids or _proc_name(pid) in _SHARED_HOSTS):
+                    hwnds.add(hwnd)
+                    if _proc_name(pid) not in _SHARED_HOSTS:
+                        pids.add(pid)
+            for pid in new_pids:  # the app's own windowless processes (a Store app's CalculatorApp.exe...)
+                if _proc_name(pid) not in _SHARED_HOSTS and (pid in pids or hwnds):
                     try:
-                        found |= {c.pid for c in psutil.Process(pid).children(recursive=True)}
+                        if psutil.Process(pid).create_time() >= time.time() - _TRACK_SECONDS - 2:
+                            pids.add(pid)
                     except psutil.Error:
                         pass
-        if found:
-            _OPENED[app_name.strip().lower()] = found
+            if hwnds:
+                # Recorded as found, not at the end - a "close it" right after the open must see it (found in
+                # the app sweep: 7-Zip closed 4 s after opening and close_app didn't know it yet).
+                _OPENED[key] = {"hwnds": set(hwnds), "pids": set(pids)}
     import threading
     threading.Thread(target=run, daemon=True, name="track-open").start()
 
 
 def _opened_pids(app_name: str) -> set[int]:
+    """The live processes and windows Vaayu started for this app (any id; empty if none)."""
+    entry = _opened_entry(app_name)
+    return (entry["pids"] | entry["hwnds"]) if entry else set()
+
+
+def _opened_entry(app_name: str) -> dict | None:
+    import win32gui
     key = app_name.strip().lower()
     if key not in _OPENED:
         from assistant.tools.names import sound_key
@@ -216,43 +250,43 @@ def _opened_pids(app_name: str) -> set[int]:
         match = max(_OPENED, key=lambda k: difflib.SequenceMatcher(None, sound_key(k), sound_key(key)).ratio(),
                     default=None)
         if not match or difflib.SequenceMatcher(None, sound_key(match), sound_key(key)).ratio() < 0.8:
-            return set()
+            return None
         key = match
-    alive = {p for p in _OPENED[key] if psutil.pid_exists(p)}
-    if not alive:
+    entry = _OPENED[key]
+    entry = {"hwnds": {h for h in entry["hwnds"] if win32gui.IsWindow(h)},
+             "pids": {p for p in entry["pids"] if psutil.pid_exists(p)}, "key": key}
+    if not entry["hwnds"] and not entry["pids"]:
         _OPENED.pop(key, None)
-    return alive
+        return None
+    return entry
 
 
-def _close_tracked(app_name: str, pids: set[int]) -> str:
-    """Close politely (WM_CLOSE, like clicking X); a window still asking about unsaved changes is left
-    for the user (their rule: ask before saving); windowless leftovers are ended."""
+def _close_tracked(app_name: str, _ids=None) -> str:
+    """Close politely (WM_CLOSE to its own windows, like clicking X); a window still asking about unsaved
+    changes is left for the user (their rule: ask before saving); its own windowless leftovers are ended."""
     import win32con
     import win32gui
-    import win32process
-
-    def windows():
-        found = []
-
-        def add(hwnd, _):
-            if win32gui.IsWindowVisible(hwnd) and win32process.GetWindowThreadProcessId(hwnd)[1] in pids:
-                found.append(hwnd)
-        win32gui.EnumWindows(add, None)
-        return found
-    for hwnd in windows():
-        win32gui.PostMessage(hwnd, win32con.WM_CLOSE, 0, 0)
-    deadline = time.time() + _CLOSE_WAIT
-    while time.time() < deadline and any(psutil.pid_exists(p) for p in pids):
-        time.sleep(0.25)
-    left = [p for p in pids if psutil.pid_exists(p)]
-    if left and windows():
-        raise RuntimeError(f"{app_name} is still open - it may be asking you to save something.")
-    for pid in left:  # no window left (a UWP app's own process, helpers): end it
+    entry = _opened_entry(app_name)
+    if entry is None:
+        return f"Closed {app_name}."
+    for hwnd in entry["hwnds"]:
         try:
-            psutil.Process(pid).terminate()
-        except psutil.Error:
+            win32gui.PostMessage(hwnd, win32con.WM_CLOSE, 0, 0)
+        except Exception:
             pass
-    _OPENED.pop(app_name.strip().lower(), None)
+    deadline = time.time() + _CLOSE_WAIT
+    while time.time() < deadline and any(win32gui.IsWindow(h) and win32gui.IsWindowVisible(h) for h in entry["hwnds"]):
+        time.sleep(0.25)
+    if any(win32gui.IsWindow(h) and win32gui.IsWindowVisible(h) for h in entry["hwnds"]):
+        raise RuntimeError(f"{app_name} is still open - it may be asking you to save something.")
+    time.sleep(0.5)
+    for pid in entry["pids"]:  # its own processes, windowless now (tray, background, a Store app's process)
+        if psutil.pid_exists(pid) and _proc_name(pid) not in _SHARED_HOSTS:
+            try:
+                psutil.Process(pid).terminate()
+            except psutil.Error:
+                pass
+    _OPENED.pop(entry["key"], None)
     return f"Closed {app_name}."
 
 
@@ -377,9 +411,8 @@ def open_app(app_name: str, foreground: bool = True) -> str:
     },
 )
 def close_app(app_name: str) -> str:
-    tracked = _opened_pids(app_name)
-    if tracked:  # an app Vaayu opened: close exactly the programs it started
-        return _close_tracked(app_name, tracked)
+    if _opened_entry(app_name):  # an app Vaayu opened: close exactly the windows/programs it started
+        return _close_tracked(app_name)
     # No alias resolution here, deliberately - see _OPEN_APP_NAME_ALIASES'
     # docstring, close_things() matches real running process names, not
     # the registered-app-name database open_things() uses, so "vlc" alone
