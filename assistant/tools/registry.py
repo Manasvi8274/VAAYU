@@ -105,7 +105,9 @@ class ToolRegistry:
         if missing:  # real log: "That didn't work - open_app() missing 1 required positional argument: 'app_name'"
             what = missing[0].replace("_name", "").replace("_", " ")
             return {"ok": False, "error": f"I'm not sure which {what} you mean - say it again with the name."}
-        refused = action_rules.refusal(name, filtered_arguments, after_content)
+        # judged on what was ASKED (all arguments), not only the ones the tool accepts - red-team set: a
+        # "Pay now" under an unexpected key must still be refused
+        refused = action_rules.refusal(name, {**arguments, **filtered_arguments}, after_content)
         if refused:  # tiers, rate limits, instructions from content (guardian/action_rules.py)
             action_rules.log(name, filtered_arguments, False, refused, path)
             return {"ok": False, "error": refused, "refused": True}

@@ -47,6 +47,9 @@ REVIEWS = DATA / "reviews"
 PYTHON = ROOT / ".venv" / "Scripts" / "python.exe"
 AUDIO_KEEP = 300  # newest voice clips kept for training the speech model on the user's voice
 SLOW_MS = 8000
+# Build plan's latency budget: a simple command's first spoken word within ~2 s on the 1650 - measured as
+# hearing (STT) + deciding (brain) for the turns the fast rules answered, i.e. before the voice starts.
+FIRST_WORD_BUDGET_MS = 2000
 CLAUDE_TIMEOUT = 30 * 60
 TEST_TIMEOUT = 20 * 60
 _LEARN_MAX = 50  # chat turns learned from per review (each is one model call)
@@ -110,19 +113,26 @@ def digest(events: list[dict], issues: list[dict], vaayu_log: str) -> tuple[str,
                 value = (step.get("args") or {}).get(arg) if step.get("tool") == tool else None
                 if isinstance(value, str) and value.lower() not in known[k]:
                     mentioned[(k, value, bool(step.get("ok")))] += 1
+    simple = [(t.get("stt_ms") or 0) + (t.get("brain_ms") or 0) for t in turns
+              if any(step.get("path") in ("fast", "fast_reply") for step in t.get("trace") or [])]
     tracebacks = re.findall(r"^(\w+(?:Error|Exception)[^\n]{0,160})$", vaayu_log or "", re.M)
     open_issues = [i for i in issues if not i.get("acknowledged")]
     stats = {"turns": len(turns), "failed": sum(len(v) for v in failures.values()), "errors": sum(errors.values()),
              "ignored_media": kinds["ignored_media"], "barge_in": kinds["barge_in"], "stops": kinds["stop"],
              "name_corrected": sum(misheard.values()), "slow": len(slow), "issues": len(open_issues),
-             "tracebacks": len(tracebacks)}
+             "tracebacks": len(tracebacks),
+             "simple_within_budget": sum(ms <= FIRST_WORD_BUDGET_MS for ms in simple), "simple": len(simple),
+             "simple_median_ms": sorted(simple)[len(simple) // 2] if simple else 0}
 
     out = [f"# Vaayu daily review - {datetime.now():%A %d %B %Y, %H:%M}", "",
            f"- Turns: {stats['turns']} | failed replies: {stats['failed']} | errors logged: {stats['errors']}",
            f"- Ignored as video audio: {stats['ignored_media']} | 'stop' while talking: {stats['barge_in']} | "
            f"Vaayu stopped: {stats['stops']}",
            f"- Names corrected by sound: {stats['name_corrected']} | slow turns (> {SLOW_MS // 1000} s): {stats['slow']}",
-           f"- Open issues (issues_log): {stats['issues']} | tracebacks in vaayu.log: {stats['tracebacks']}", ""]
+           f"- Open issues (issues_log): {stats['issues']} | tracebacks in vaayu.log: {stats['tracebacks']}",
+           f"- Latency budget (simple commands, heard + decided within {FIRST_WORD_BUDGET_MS / 1000:.0f} s): "
+           + (f"{stats['simple_within_budget']}/{stats['simple']}, median {stats['simple_median_ms'] / 1000:.1f} s"
+              if simple else "no simple commands today"), ""]
     if failures:
         out += ["## Failed replies (most common first)", ""]
         for reply, texts in sorted(failures.items(), key=lambda kv: -len(kv[1]))[:25]:

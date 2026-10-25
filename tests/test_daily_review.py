@@ -175,3 +175,13 @@ def test_usage_limit_means_no_session_and_the_logs_are_kept(logs, tmp_path, monk
     assert (logs / "interactions.jsonl").exists() and (logs / "vaayu.log").exists()  # kept for the next review
     assert not (where / "raw").exists()
     assert "kept the logs for the next review" in (where / "digest.md").read_text(encoding="utf-8")
+
+
+def test_digest_reports_the_latency_budget_for_simple_commands():
+    from assistant import daily_review
+    turns = [{"kind": "turn", "text": t, "reply": "ok", "stt_ms": stt, "brain_ms": brain, "trace": [{"path": p}]}
+             for t, stt, brain, p in [("open notepad", 600, 40, "fast"), ("what time is it", 700, 5, "fast_reply"),
+                                      ("close chrome", 2500, 30, "fast"), ("tell me a story", 900, 9000, "chat")]]
+    report, stats = daily_review.digest(turns, [], "")
+    assert (stats["simple_within_budget"], stats["simple"]) == (2, 3)  # the chat turn isn't a simple command
+    assert "Latency budget" in report and "2/3" in report
