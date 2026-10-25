@@ -17,6 +17,7 @@ from assistant.tools import (  # noqa: F401
     system_control,
     system_info,
     video_player,
+    voice,
     web,
     web_answer,
     whatsapp,

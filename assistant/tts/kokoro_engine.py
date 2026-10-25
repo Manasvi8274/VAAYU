@@ -10,8 +10,8 @@ by sentence (the next is synthesised while the current one plays), and the
 audio of replies already said is cached ("Opened Brave." is instant the
 second time).
 
-Default voice hm_psi: an Indian male voice, the clearest of the six tried
-(6.6% word errors when the speech model transcribed what it said).
+Default voice am_echo: a US male voice like the old Windows one (Microsoft David) - the
+user found hm_psi "very heavy". "Vaayu, change your voice" switches (tools/voice.py).
 
 Files: models/kokoro/kokoro-v1.0.onnx + voices-v1.0.bin (from the
 kokoro-onnx model-files-v1.0 release; gitignored with models/).
@@ -51,6 +51,22 @@ def _sentences(text: str) -> list[str]:
     return out
 
 
+# The voices worth offering, lightest/closest to the old Windows voice (Microsoft David) first -
+# measured: pitch/pace vs David, and word errors when the speech model heard each one.
+VOICES = {"echo": "am_echo", "lewis": "bm_lewis", "george": "bm_george", "daniel": "bm_daniel",
+          "fable": "bm_fable", "adam": "am_adam", "omega": "hm_omega", "psi": "hm_psi", "michael": "am_michael",
+          "puck": "am_puck", "heart": "af_heart", "emma": "bf_emma"}
+VOICE_FILE = Path(__file__).resolve().parent.parent.parent / "data" / "voice.txt"
+ACTIVE: "KokoroEngine | None" = None  # the running engine, for the set_voice tool
+
+
+def _saved_voice() -> str | None:
+    try:
+        return VOICE_FILE.read_text(encoding="utf-8").strip() or None
+    except OSError:
+        return None
+
+
 class KokoroEngine(TTSEngine):
     def __init__(self, voice: str = "hm_psi", speed: float = 1.05, device: str = "cpu"):
         import onnxruntime as ort
@@ -62,8 +78,19 @@ class KokoroEngine(TTSEngine):
         session = ort.InferenceSession(str(model), providers=["CPUExecutionProvider"])
         self._cache: dict[str, tuple[np.ndarray, int]] = {}
         self.kokoro = Kokoro.from_session(session, str(voices))
-        self.voice, self.speed = voice, speed
+        saved = _saved_voice()
+        self.voice = saved if saved in self.kokoro.get_voices() else voice  # "Vaayu, change your voice" sticks
+        self.speed = speed
         self._synth("Ready.")  # first call is slow (kernel setup) - pay it at startup, not on the first reply
+        global ACTIVE
+        ACTIVE = self
+
+    def set_voice(self, voice: str) -> None:
+        if voice not in self.kokoro.get_voices():
+            raise ValueError(f"No voice called {voice}.")
+        self.voice, self._cache = voice, {}
+        VOICE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        VOICE_FILE.write_text(voice, encoding="utf-8")
 
     def _synth(self, text: str) -> tuple[np.ndarray, int]:
         if text in self._cache:

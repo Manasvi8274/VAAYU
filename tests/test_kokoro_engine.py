@@ -61,3 +61,21 @@ def test_short_replies_are_cached_long_ones_are_not():
     e._synth("x" * 200)
     e._synth("x" * 200)
     assert e.kokoro.create.call_count == 3
+
+
+def test_change_voice_by_voice_and_it_sticks(tmp_path, monkeypatch):
+    from assistant.llm import router
+    from assistant.tools import voice
+    monkeypatch.setattr(kokoro_engine, "VOICE_FILE", tmp_path / "voice.txt")
+    e = KokoroEngine.__new__(KokoroEngine)
+    e.voice, e._cache = "am_echo", {"x": 1}
+    e.kokoro = MagicMock()
+    e.kokoro.get_voices.return_value = list(kokoro_engine.VOICES.values())
+    monkeypatch.setattr(kokoro_engine, "ACTIVE", e)
+    assert router.fast_route("change your voice") == ("tools", [("set_voice", {"voice": "next"})])
+    assert router.fast_route("use the george voice") == ("tools", [("set_voice", {"voice": "george"})])
+    assert "Lewis" in voice.set_voice("next")  # echo -> lewis
+    assert e.voice == "bm_lewis" and e._cache == {}
+    assert kokoro_engine._saved_voice() == "bm_lewis"  # remembered for the next start
+    voice.set_voice("george")
+    assert e.voice == "bm_george"

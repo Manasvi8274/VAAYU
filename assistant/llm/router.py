@@ -639,6 +639,8 @@ def _route_one(t: str):
                 if "bg" in pattern.groupindex and m.group("bg"):
                     args["foreground"] = False
                 return ("tool", name, args)
+    if m := _VOICE.match(t):  # "change your voice" / "use the george voice" (tools/voice.py)
+        return ("tool", "set_voice", {"voice": (m.group("v") or m.group("v2") or "next").strip()})
     # Songs through the speakers, no browser (tools/music.py) - "on youtube" / "video" still mean YouTube.
     if m := _MUSIC.match(t):
         q = next(g for g in m.groups() if g)
@@ -657,6 +659,10 @@ _MUSIC = re.compile(
     r"^(?:play|put on)(?: me| us)?(?: the| a| some)? (?P<q2>.+?) (?:song|songs|music|gaana|gaane|track)$|"
     r"^(?P<q3>.+?) (?:ka |ke |ki )?(?:song|songs|gaana|gaane|gana|music) (?:chalao|bajao|lagao|sunao|play karo|chala do|baja do)$",
     re.I)
+_VOICE = re.compile(
+    r"^(?:change|switch|try)(?: your| the| my)? voice(?: to(?: the)? (?P<v>\w+)(?: voice)?)?$|"
+    r"^(?:use|try)(?: the)? (?P<v2>\w+) voice$|^(?:try )?(?:a |another |next |different )voice$|"
+    r"^(?:awaaz|awaz|voice) (?:badlo|change karo|badal do)$", re.I)
 _PLAY_BARE = re.compile(r"^(?:play|bajao|sunao) (?P<q>.{3,})$", re.I)
 _NOT_A_SONG = re.compile(r"\b(?:video|videos|youtube|channel|tab|it|this|that|next|previous|again|movie|film|trailer|"
                          r"episode|game|match|result|one|first|second|third|last|from|at|speed|"

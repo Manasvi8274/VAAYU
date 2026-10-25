@@ -33,6 +33,7 @@ mitigates this somewhat, since irrelevant audio only matters if it happens
 to contain "Vaayu" alongside a control word.
 """
 
+import os
 import threading
 from pathlib import Path
 import time
@@ -228,6 +229,7 @@ class Orchestrator:
         self.continuous = config.activation.mode == "continuous"
         self.state = State.SLEEPING
         self.should_exit = False
+        self._busy = False  # mid-command: the Stop shortcut waits for this to clear
         # Optional queue.Queue to a status_orb.StatusOrb running on the main
         # thread (see gui/status_orb.py) - when set, replies are spoken via
         # speak_with_amplitude so the orb can glow in sync with real speech.
@@ -346,12 +348,39 @@ class Orchestrator:
         if daily_review.start_in_background("scheduled"):
             print("Vaayu: started the daily log review in the background.")
 
+    def _watch_stop_request(self) -> None:
+        """The "Stop Vaayu" shortcut (assistant/stop.py): finish the current turn, say goodbye, exit 0 -
+        the guardian sees an intended exit and stops too. The blocking mic read can't be woken any
+        other way, so this thread ends the process itself once Vaayu is between turns."""
+        from assistant.stop import STOP_FLAG
+        STOP_FLAG.unlink(missing_ok=True)  # a stale request from before this start
+        while True:
+            time.sleep(0.5)
+            if not STOP_FLAG.exists():
+                continue
+            STOP_FLAG.unlink(missing_ok=True)
+            deadline = time.time() + 25
+            while self._busy and time.time() < deadline:  # never cut a command off halfway
+                time.sleep(0.2)
+            interaction_log.log_event("stop", should_exit=True, source="stop shortcut")
+            print("Vaayu: Stop requested - shutting down. Goodbye.")
+            try:
+                self._speak("Shutting down. Goodbye.")
+            finally:
+                os._exit(0)
+
     def handle_one_turn(self) -> None:
         self._maybe_run_daily_checkin()
         audio = self._capture_utterance()
         if len(audio) == 0:
             return
+        self._busy = True
+        try:
+            self._handle_utterance(audio)
+        finally:
+            self._busy = False
 
+    def _handle_utterance(self, audio) -> None:
         with Timer() as stt_time:
             text = self.stt.transcribe(audio)
         audio_seconds = round(len(audio) / _SAMPLE_RATE, 1)
@@ -444,6 +473,7 @@ class Orchestrator:
 
     def run_forever(self) -> None:
         _media_monitor()  # start watching the sound level before the first command
+        threading.Thread(target=self._watch_stop_request, daemon=True, name="stop-request").start()
         from assistant.tools import youtube_taste
         youtube_taste.start_watch_logger()  # what plays on YouTube, whoever started it -> taste
         from assistant import research

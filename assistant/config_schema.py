@@ -31,7 +31,8 @@ class ListeningConfig(BaseModel):
 class TTSConfig(BaseModel):
     rate: int = 210  # pyttsx3 words-per-minute; 210 = 1.2x the original 175 default
     engine: str = "kokoro"  # "kokoro" (natural voice, models/kokoro) or "pyttsx3" (Windows' built-in voice)
-    voice: str = "hm_psi"  # Kokoro voice - hm_psi: Indian male; bm_george: British male; af_heart: US female
+    voice: str = "am_echo"  # Kokoro voice - am_echo: US male like the old Windows voice; bm_lewis/bm_george: British
+                            # male; hm_psi: Indian male (deeper). "Vaayu, change your voice" overrides (data/voice.txt)
     speed: float = 1.05
     device: str = "cpu"  # Kokoro runs on the CPU (see tts/kokoro_engine.py for why not the GPU)
 
