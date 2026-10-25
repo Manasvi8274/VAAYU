@@ -153,11 +153,21 @@ _YT_RULES = [
     (r"^(?:speed (?:it |the video )?up|speed badhao|faster)$", lambda m: _yt("speed", 1.5)),
     (r"^(?:slow (?:it |the video )?down|slower|speed kam karo)$", lambda m: _yt("speed", 0.75)),
     (r"^(?:what(?:'s| is)(?: this)? (?:playing|video|song)|what(?:'s| is) this|what (?:video|song) is (?:this|playing)|which (?:video|song) is (?:this|playing)|"
-     r"what am i (?:watching|listening to)|ye kaunsa (?:gaana|video) hai|kya chal raha hai)$", lambda m: _yt("now_playing")),
+     r"what am i (?:watching|listening to)|ye kaunsa (?:gaana|video) hai|kya chal raha hai|"
+     # real log: "What is the name of the song." went to the model, 27 s, "Which song are you referring to?"
+     r"what(?:'s| is) the name of (?:the|this) (?:song|video)|(?:tell me )?the name of (?:the|this) song|"
+     r"(?:is |ye )?gaane ka naam(?: kya hai| batao)?)$", lambda m: _yt("now_playing")),
+    # real log: a news video played for a song - "It's not a song." went to the model, 26 s, and nothing changed
+    (r"^(?:no,? )?(?:it'?s|that'?s|this is|it is|that is) not (?:a|the|the right|my|that) (?:song|one)$|"
+     r"^(?:wrong|galat) (?:song|gaana)$|^not this (?:one|song)$|^ye wala nahi$", lambda m: _yt("next")),
     (r"^(?:play )?(?:the )?next video$|^agla video(?: chalao| lagao)?$|^skip(?: this)? video$", lambda m: _yt("next")),
     (r"^(?:play |go back to )?(?:the )?previous video$|^pichla video(?: chalao| lagao)?$", lambda m: _yt("previous")),
     (rf"^(?:restart|replay|start over){_THE_VIDEO}$|^(?:play|start)(?: it| the video)? from the (?:start|beginning)$|"
-     r"^shuru se (?:chalao|lagao)$|^start (?:it |the video )?(?:again|over)$", lambda m: _yt("restart")),
+     r"^shuru se (?:chalao|lagao)$|^start (?:it |the video )?(?:again|over)$|"
+     # real log: "No stop the song entirely and then replay it from starting." set a 15-second play instead
+     r"^(?:restart|replay)(?: the)? song$|^play (?:it|the song|this song) again$|"
+     r"^(?:play|start)(?: it| the song| this song)? from the (?:start|beginning|starting)$|"
+     r"^.*\b(?:replay|restart|play) (?:it|the song) from (?:the )?(?:start|starting|beginning)$", lambda m: _yt("restart")),
     (r"^(?:go|jump|skip|seek)(?: to)? (?P<mm>\d{1,2}):(?P<ss>\d{2})$", lambda m: _yt("seek_to", int(m.group("mm")) * 60 + int(m.group("ss")))),
     (r"^(?:go|jump|skip|seek) to (?P<n>\d+) (?P<u>minutes?|mins?|seconds?|secs?)(?: mark)?$",
      lambda m: _yt("seek_to", int(m.group("n")) * (60 if m.group("u").lower().startswith("m") else 1))),

@@ -46,7 +46,7 @@ SERVERS = [
     ("git", "pypi", "mcp-server-git", "2026.10.19", "Work with git repositories: status, diffs, commits, branches", {}),
     ("word", "pypi", "office-word-mcp-server", "1.1.11", "Create and edit Word documents", {"timeout": 120}),
     ("powerpoint", "pypi", "office-powerpoint-mcp-server", "2.0.7", "Create and edit PowerPoint presentations",
-     {"timeout": 120}),
+     {"timeout": 120, "pip_pins": ["mcp<2"]}),  # its code uses mcp 1.x's FastMCP
     ("excel", "pypi", "excel-mcp-server", "2.2.2", "Create, read and edit Excel workbooks and charts",
      {"args": ["stdio"], "timeout": 120}),
 ]
@@ -60,7 +60,7 @@ def main(only: list[str]) -> None:
         print(f"{name}: fetching {package} {version} ...", flush=True)
         try:
             entry = mcp_builder.download({"name": name, "about": about, "type": kind, "package": package,
-                                          "version": version})
+                                          "version": version, "pip_pins": extra.get("pip_pins", [])})
         except Exception as exc:
             print(f"  FAILED: {exc}", flush=True)
             continue

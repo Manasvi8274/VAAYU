@@ -394,7 +394,21 @@ class Orchestrator:
             self._set_state(State.AWAKE)
         self._name_window_until = time.time() + _NAME_WINDOW_SECONDS + 4  # the next sentence is for Vaayu
         interaction_log.log_event("name_over_music", heard=heard)
-        self._speak("Yes?")
+        self._listening_chime()
+
+    def _listening_chime(self) -> None:
+        """A short soft tone when only his name was said, instead of "Yes?": people go straight on with the
+        command, and Vaayu's mic is deaf while he talks - real log: "play the Bollywood song Bang Bang" arrived as
+        "Bollywood song with", its start said over his "Yes?". A tone doesn't take the mic away."""
+        try:
+            import numpy as np
+            import sounddevice as sd
+            rate = 48000
+            t = np.arange(int(rate * 0.16)) / rate
+            tone = 0.12 * np.sin(2 * np.pi * 880 * t) * np.hanning(len(t))  # calibration knob: loudness 0.12
+            sd.play(tone.astype(np.float32), rate)  # not waited on - the mic stays open
+        except Exception:
+            pass
 
     def _watch_stop_request(self) -> None:
         """The "Stop Vaayu" shortcut (assistant/stop.py): finish the current turn, say goodbye, exit 0 -
@@ -485,7 +499,7 @@ class Orchestrator:
             if not has_command_content(text):
                 # bare "wake up Vaayu" / "Vaayu" - nothing else to act on
                 print("Vaayu: Yes? I'm listening.")
-                self._speak("Yes? I'm listening.")
+                self._listening_chime()
                 self._name_window_until = time.time() + _NAME_WINDOW_SECONDS
                 return
             # else: "Vaayu, open brave" style - wake AND handle the attached
@@ -505,12 +519,19 @@ class Orchestrator:
             else:
                 rest = text_after_name(text)
                 if not has_command_content(rest):
-                    self._speak("Yes?")
+                    self._listening_chime()
                     self._name_window_until = time.time() + _NAME_WINDOW_SECONDS
                     interaction_log.log_event("name_only_media", text=text)
                     return
                 interaction_log.log_event("media_command", heard=text, used=rest)
                 text = rest
+
+        if self.state is State.AWAKE and is_name_mentioned(text) and not has_command_content(text_after_name(text)):
+            # just "Hey Vaayu" while awake - real log: it went to the chat model, 19.6 s for "Heyyaar, kya problem hai?"
+            self._listening_chime()
+            self._name_window_until = time.time() + _NAME_WINDOW_SECONDS
+            interaction_log.log_event("name_only", text=text)
+            return
 
         self.messages.append({"role": "user", "content": text})
         self.brain.trace = []

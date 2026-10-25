@@ -14,6 +14,7 @@ import os
 import re
 import sys
 import threading
+import time
 from contextlib import AsyncExitStack
 from functools import partial
 from pathlib import Path
@@ -25,7 +26,9 @@ log = logging.getLogger(__name__)
 REPO = Path(__file__).resolve().parent.parent
 LIST = REPO / "mcp_servers" / "servers.json"
 _CALL_TIMEOUT = 30.0
-_START_TIMEOUT = 30.0
+_START_TIMEOUT = 90.0  # real log: DuckDuckGo and fetch needed > 30 s with 15 servers starting at once
+_RETRY_FAILED = 3600.0  # a server that didn't start is tried again after an hour, not every minute
+_FAILED: dict[str, float] = {}
 LOADED: dict[str, "Server"] = {}
 ANNOUNCE = None  # the orchestrator sets this to Vaayu's voice: "On it - give me a minute" before a slow tool
 _SAID_WAITING: set[str] = set()
@@ -163,7 +166,7 @@ def load_all(registry=default_registry) -> dict[str, list[str]]:
         return out
     for entry in entries:
         name = entry["name"]
-        if name in LOADED:
+        if name in LOADED or time.time() - _FAILED.get(name, 0) < _RETRY_FAILED:
             continue
         if not upgrades.is_approved(name, entry["files"]):
             if name not in _SAID_WAITING:  # checked every minute - said once
@@ -185,8 +188,9 @@ def load_all(registry=default_registry) -> dict[str, list[str]]:
         else:  # first time since its approval: start it once to learn its tools
             try:
                 running = make()
-            except Exception as exc:
-                log.warning("MCP %s didn't start: %s", name, exc)
+            except Exception as exc:  # real log: PowerPoint failed - and was retried, with a traceback, 27 times
+                _FAILED[name] = time.time()
+                log.warning("MCP %s didn't start (%s: %s) - trying again in an hour", name, type(exc).__name__, exc)
                 continue
             _remember_schemas(name, pin, running.tools)
             server = Lazy(name, running.tools, lambda running=running: running)

@@ -117,8 +117,11 @@ def download(c: dict) -> dict:
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     if c["type"] == "pypi":
         spec = f"{c['package']}=={c['version']}" if c["version"] else c["package"]
+        # pins a package needs that it doesn't declare (found: PowerPoint's server is written for mcp 1.x but
+        # let pip install 2.x, and couldn't start)
         run = subprocess.run([sys.executable, "-m", "pip", "install", "--only-binary=:all:", "--target", str(dest),
-                              spec], capture_output=True, text=True, timeout=600, creationflags=flags)
+                              spec, *c.get("pip_pins", [])], capture_output=True, text=True, timeout=600,
+                             creationflags=flags)
         if run.returncode != 0:
             raise RuntimeError(f"pip couldn't fetch {spec}: {run.stderr.strip()[-200:]}")
         ep = _entry_point(dest, c["package"])

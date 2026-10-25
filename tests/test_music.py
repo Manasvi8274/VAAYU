@@ -224,3 +224,25 @@ def test_what_reached_the_speakers_is_logged_as_heard_on_stop(monkeypatch):
         p._callback(out, music._RATE, None, None)
     p.stop()
     assert logged == [("k", 3, 60)]
+
+
+def test_the_best_matching_song_like_result_is_played_not_just_the_first():
+    # Real log: a messy request played a Hindi news video (the first result); "Bollywood song" played a quiz.
+    results = [{"title": "नही हुई कई जगह नमाज़े जुमा, एकतरफ़ा कार्रवाई", "channel": "News 24", "duration": 200},
+               {"title": "Guess The Bollywood Song By Emoji", "channel": "Puzzle Time", "duration": 300},
+               {"title": "Fakira - Student Of The Year 2 | Lyrical Video", "channel": "Zee Music Company", "duration": 230}]
+    kept = [r for r in results if not music._NOT_MUSIC.search(r["title"])]
+    assert "Guess" not in " ".join(r["title"] for r in kept)
+    assert music._rank(kept, "de fakira to hona zaruri hai")[0]["title"].startswith("Fakira")
+
+
+@pytest.mark.parametrize("said, action", [
+    ("What is the name of the song.", "now_playing"),   # real log: 27 s to the model
+    ("It's not a song.", "next"),                        # real log: a news video kept playing
+    ("No stop the song entirely and then replay it from starting.", "restart"),  # real log: set a 15 s play
+    ("play the song from the beginning", "restart"),
+    ("play it again", "restart"),
+])
+def test_song_phrases_that_went_to_the_slow_model(said, action):
+    from assistant.llm import router
+    assert router.fast_route(said) == ("tools", [("youtube_control", {"action": action})])

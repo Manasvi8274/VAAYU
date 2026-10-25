@@ -233,7 +233,26 @@ _FILLER = re.compile(r"\b(?:which|that) (?:is|was)(?: from| in| named| called| s
                      r"\b(?:named|called|starring|featuring|from the movie|from the film|from the|of the movie|"
                      r"the movie|the film|bollywood movie|hindi movie|movie|film)\b|^(?:a|the|some|any|that)\s+", re.I)
 _NOT_MUSIC = re.compile(r"\b(?:trailer|teaser|full movie|full film|movie scene|scene|reaction|review|interview|explained|"
-                        r"behind the scenes|making of|news|podcast|shorts?)\b", re.I)
+                        r"behind the scenes|making of|news|podcast|shorts?|"
+                        # real log: "Bollywood song" played "Guess The Bollywood Song By Emoji"
+                        r"guess|quiz|emoji|challenge|prank|vlog|tutorial|lesson|how to)\b", re.I)
+_SONGLIKE = re.compile(r"\b(?:song|songs|lyrical|lyrics|lyric|audio|video song|music video|official video|full song|"
+                       r"jukebox|unplugged|cover|remix|lofi)\b", re.I)
+_LABELS = re.compile(r"t-?series|zee music|sony music|saregama|tips|yrf|speed records|eros|venus|shemaroo|desi music|"
+                     r"hit music|vevo|records|music", re.I)
+
+
+def _rank(results: list[dict], query: str) -> list[dict]:
+    """Best match first: the words asked for in the title, and song-like (a song marker, a music label).
+    YouTube's order breaks ties. Real log: a messy request played a Hindi NEWS video - the first result -
+    with none of the words asked for and nothing song-like about it."""
+    words = {w for w in re.findall(r"[a-z0-9]+", query.lower()) if len(w) > 2 and w not in ("song", "songs", "the")}
+
+    def score(r):
+        title = r["title"].lower()
+        return (2 * sum(w in title for w in words) + 2 * bool(_SONGLIKE.search(title))
+                + 1 * bool(_LABELS.search(r.get("channel") or "")))
+    return sorted(results, key=score, reverse=True)
 
 
 def _clean_query(query: str) -> str:
@@ -317,7 +336,7 @@ def play_music(query: str, seconds: int | None = None) -> str:
         query = (f"{channels.most_common(1)[0][0]} songs" if channels else "top hindi songs")
     results = _search(query if len(query.split()) > 1 or "song" in query.lower() else f"{query} song")
     songs = [r for r in results if 60 <= (r["duration"] or 0) <= 12 * 60 and not _NOT_MUSIC.search(r["title"])]
-    songs = songs or [r for r in results if not _NOT_MUSIC.search(r["title"])] or results
+    songs = _rank(songs or [r for r in results if not _NOT_MUSIC.search(r["title"])] or results, query)
     if not songs:
         raise RuntimeError(f"I couldn't find a song for {query}.")
     track = _play_first(songs, seconds)

@@ -191,6 +191,15 @@ def _isolated_watch_history(tmp_path_factory):
 
 
 @pytest.fixture(autouse=True, scope="session")
+def _no_real_chime():
+    # The listening tone plays on the real speakers.
+    from assistant import orchestrator
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(orchestrator.Orchestrator, "_listening_chime", lambda self: None)
+        yield
+
+
+@pytest.fixture(autouse=True, scope="session")
 def _no_real_new_abilities():
     # get_new_ability searches the MCP Registry, downloads servers and starts a Claude session - never in
     # tests (its own tests use _real_acquire with everything mocked).

@@ -53,8 +53,9 @@ def test_name_over_the_song_pauses_it_and_waits_for_the_command(monkeypatch):
     monkeypatch.setattr(music, "hold_for_listening", lambda: held.append(True))
     o = orchestrator.Orchestrator.__new__(orchestrator.Orchestrator)
     o.listener, o.state, o.gui_queue, o._name_window_until = MagicMock(), orchestrator.State.SLEEPING, None, 0.0
-    o._speak = MagicMock()
+    o._speak, o._listening_chime = MagicMock(), MagicMock()
     o._on_name_over_music(" Vaayu.")
     assert held == [True] and o.listener.interrupt.called and o.state is orchestrator.State.AWAKE
-    o._speak.assert_called_once_with("Yes?")
+    # a tone, not "Yes?" - real log: the command's start was said over his "Yes?" and lost
+    o._listening_chime.assert_called_once() and o._speak.assert_not_called()
     assert o._name_window_until > time.time() + 5
