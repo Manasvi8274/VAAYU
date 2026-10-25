@@ -10,6 +10,7 @@ Built-in tools always win a name clash: a server can add abilities, never replac
 import asyncio
 import json
 import logging
+import re
 import sys
 import threading
 from contextlib import AsyncExitStack
@@ -55,8 +56,8 @@ class Server:
     def call(self, tool: str, **arguments) -> str:
         result = self._run(self._client.call_tool(tool, arguments), _CALL_TIMEOUT)
         text = " ".join(getattr(c, "text", "") for c in result.content).strip()
-        if result.is_error:
-            raise RuntimeError(text or f"{tool} failed")
+        if result.is_error:  # said as is: "I can't see notepad open", not the SDK's "Error executing tool..."
+            raise RuntimeError(re.sub(r"^Error executing tool \w+: ", "", text) or f"{tool} failed")
         return text
 
 
