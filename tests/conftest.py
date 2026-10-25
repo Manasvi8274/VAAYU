@@ -191,6 +191,17 @@ def _isolated_watch_history(tmp_path_factory):
 
 
 @pytest.fixture(autouse=True, scope="session")
+def _no_real_new_abilities():
+    # get_new_ability searches the MCP Registry, downloads servers and starts a Claude session - never in
+    # tests (its own tests use _real_acquire with everything mocked).
+    from assistant import mcp_builder
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(mcp_builder, "_real_acquire", mcp_builder.acquire, raising=False)
+        mp.setattr(mcp_builder, "acquire", lambda need: (_ for _ in ()).throw(RuntimeError("not in tests")))
+        yield
+
+
+@pytest.fixture(autouse=True, scope="session")
 def _isolated_action_log(tmp_path_factory):
     # Every dispatch writes the append-only action log and counts toward the rate limits - tests get a
     # temp log and no limits (their own tests set them).

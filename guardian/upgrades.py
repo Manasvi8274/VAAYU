@@ -76,6 +76,9 @@ def scan(files: list[Path], root: Path | None = None) -> dict:
         rel = f.relative_to(root or REPO).as_posix()
         if rel.startswith("guardian/"):
             critical.append(f"changes the Guardian itself ({rel})")
+        if f.suffix in (".js", ".mjs", ".cjs"):  # an npm server: no parser here, so its words are read
+            _scan_js(f.read_text(encoding="utf-8", errors="replace"), rel, powers, domains, critical)
+            continue
         if f.suffix != ".py":
             continue
         source = f.read_text(encoding="utf-8", errors="replace")
@@ -125,6 +128,30 @@ def scan(files: list[Path], root: Path | None = None) -> dict:
         powers.add("network access")
     return {"powers": sorted(powers), "domains": sorted(domains), "critical": critical, "notes": notes,
             "bandit": _bandit(files)}
+
+
+_JS_POWERS = [
+    (r"\bchild_process\b|\bexecSync\s*\(|\bspawn(?:Sync)?\s*\(|\bexecFile\s*\(", "runs programs"),
+    (r"\bfs(?:\.promises)?\.(?:unlink|rm|rmdir)(?:Sync)?\s*\(|\brimraf\b", "deletes files"),
+    (r"""\brequire\(\s*['"](?:node:)?(?:https?|net|dgram|tls)['"]\s*\)|\bfrom\s+['"](?:node:)?(?:https?|net)['"]|"""
+     r"\bfetch\s*\(|\baxios\b|\bWebSocket\b", "network access"),
+    (r"\brobotjs\b|\bnut-tree\b|\bSendKeys\b", "controls the laptop (types, clicks, keys)"),
+]
+
+
+def _scan_js(source: str, rel: str, powers: set, domains: set, critical: list) -> None:
+    from guardian.rules import is_payment_target
+    for pattern, power in _JS_POWERS:
+        if re.search(pattern, source):
+            powers.add(power)
+    for host in re.findall(r"https?://([a-z0-9.-]+)", source, re.I):
+        domains.add(host.lower())
+    if m := _CRITICAL_TEXT.search(source):
+        critical.append(f"touches a protected part of Windows ('{m.group(0)}') in {rel}")
+    for literal in re.findall(r"""['"]([^'"\n]{3,80})['"]""", source):
+        if is_payment_target(literal):
+            critical.append(f"mentions a payment/banking target ('{literal[:40]}') in {rel}")
+            break
 
 
 def _bandit(files: list[Path]) -> list[str]:
@@ -307,10 +334,28 @@ def _merge(r: dict, by: str) -> dict:
     merged = _git("merge", "--ff-only", r["branch"])
     if merged.returncode != 0:
         raise RuntimeError(f"Couldn't fast-forward {r['base']}: {merged.stderr.decode().strip()[:200]}")
+    _pin_servers_in(r)
     r["status"] = "approved"
     _save(r)
     _decide({"event": "approved", "id": r["id"], "name": r["name"], "by": by, "merged": r["commit"]})
     return r
+
+
+def _pin_servers_in(r: dict) -> None:
+    """An approved patch that adds an MCP server (one Vaayu built): the server's files are pinned too, so it
+    loads - it was part of what the user just approved."""
+    try:
+        entries = json.loads((REPO / "mcp_servers" / "servers.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    approved = _approved()
+    for entry in entries:
+        if entry.get("files") and set(entry["files"]) <= set(r["files"]):
+            paths = [REPO / f for f in entry["files"]]
+            approved[entry["name"]] = {"id": r["id"], "sha256": _sha(paths), "files": entry["files"],
+                                       "approved": _now(), "by": f"with patch #{r['id']}", "harm": r["harm"]}
+    APPROVED.parent.mkdir(parents=True, exist_ok=True)
+    APPROVED.write_text(json.dumps(approved, indent=1, ensure_ascii=False), encoding="utf-8")
 
 
 def reject(uid: int, by: str) -> dict:

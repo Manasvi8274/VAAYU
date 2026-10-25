@@ -147,3 +147,27 @@ def test_a_patch_branch_changed_after_its_report_is_not_merged(repo):
     git("checkout", "-q", "vaayu-v2")
     with pytest.raises(PermissionError, match="changed after the report"):
         upgrades.approve(r["id"], by="test")
+
+
+def test_an_npm_servers_powers_are_read_from_its_code(repo):
+    f = _write(repo, "server.js", "const { execSync } = require('child_process');\n"
+                                  "fetch('https://api.example.net/x');\n")
+    r = upgrades.propose("mcp", "js-tool", [f], claim="Runs a program and fetches from the web")
+    assert {"runs programs", "network access"} <= set(r["powers"]) and r["domains"] == ["api.example.net"]
+
+
+def test_a_server_vaayu_built_loads_once_its_patch_is_approved(repo):
+    import json as _json
+    git = _git_repo(repo)
+    git("checkout", "-q", "-b", "vaayu-mcp-pdf")
+    (repo / "mcp_servers" / "pdf_reader.py").write_text("def read():\n    return 'text'\n")
+    (repo / "mcp_servers" / "servers.json").write_text(_json.dumps([{"name": "pdf-reader",
+        "files": ["mcp_servers/pdf_reader.py"], "command": ["{python}", "-m", "mcp_servers.pdf_reader"]}]))
+    git("add", ".")
+    git("commit", "-qm", "pdf reader")
+    git("checkout", "-q", "vaayu-v2")
+    r = upgrades.propose_patch("new ability: read pdfs", "vaayu-mcp-pdf", claim="Reads PDFs", tests_passed=True,
+                               test_line="ok")
+    assert not upgrades.is_approved("pdf-reader", ["mcp_servers/pdf_reader.py"])
+    upgrades.approve(r["id"], by="test")
+    assert upgrades.is_approved("pdf-reader", ["mcp_servers/pdf_reader.py"])

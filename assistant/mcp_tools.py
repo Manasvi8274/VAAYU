@@ -91,6 +91,21 @@ def waiting_for(tool: str) -> str | None:
     return None
 
 
+_RELOAD_SECONDS = 60
+
+
+def keep_loading(registry=default_registry) -> None:
+    """Load what's approved now, and again every minute - a server the user approves later (in 'Vaayu
+    Upgrades') starts working without restarting Vaayu ("reload plugins")."""
+    import time
+    while True:
+        try:
+            load_all(registry)
+        except Exception as exc:  # never let a bad listing end the loop
+            log.warning("MCP reload failed: %s", exc)
+        time.sleep(_RELOAD_SECONDS)
+
+
 def load_all(registry=default_registry) -> dict[str, list[str]]:
     """Start every approved server; {server: [its tools]}. Never raises - a broken server is skipped."""
     from mcp.client.stdio import StdioServerParameters

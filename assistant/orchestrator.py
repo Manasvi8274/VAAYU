@@ -42,6 +42,7 @@ from enum import Enum
 from zoneinfo import ZoneInfo
 
 import assistant.tools  # noqa: F401  (registers every tool)
+import assistant.mcp_builder  # noqa: F401  (registers get_new_ability)
 from assistant.activation.hotkey_listener import HotkeyActivator
 from assistant.audio.barge_in import BargeIn
 from assistant.audio.capture import record
@@ -547,8 +548,9 @@ class Orchestrator:
                         should_listen=lambda: music.player.active and not music.player.paused.is_set())
         from assistant.tools import youtube_taste
         youtube_taste.start_watch_logger()  # what plays on YouTube, whoever started it -> taste
-        from assistant import mcp_tools  # the MCP servers the Guardian approved (and only those)
-        threading.Thread(target=mcp_tools.load_all, daemon=True, name="mcp-load").start()
+        from assistant import mcp_builder, mcp_tools  # the MCP servers the Guardian approved (and only those)
+        threading.Thread(target=mcp_tools.keep_loading, daemon=True, name="mcp-load").start()
+        mcp_builder.ANNOUNCE = self._speak  # "a tool to X is ready - waiting for your yes"
         from assistant import research
         research.start(self.config, self.brain.client)  # reads about their topics while idle
         if self.continuous:

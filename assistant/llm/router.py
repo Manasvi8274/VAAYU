@@ -623,12 +623,24 @@ def _route_in_app(t: str):
     return None
 
 
+# A new ability on request (assistant/mcp_builder.py): a free MCP server if there is one, else Vaayu's own -
+# "find a tool to translate text", "make yourself a tool that can read PDFs", "get an MCP for cricket scores".
+_NEW_ABILITY = re.compile(
+    r"^(?:please )?(?:find|get|download|install|add|search for|look for)(?: me| yourself)?(?: a| an| some)?(?: new)? "
+    r"(?:tool|mcp|mcp server|plugin|skill|ability|capability)s?(?: for| to| that can| which can| so (?:that )?you can|"
+    r" that lets you| that will)? (?P<need>.+)$"
+    r"|^(?:please )?(?:make|build|create|write)(?: yourself| me| your own)?(?: a| an)?(?: new)? "
+    r"(?:tool|mcp|mcp server|plugin|skill)(?: for| to| that can| which can| so (?:that )?you can| that will)? (?P<n2>.+)$"
+    r"|^(?:give yourself|teach yourself|get|learn) the (?:ability|power|skill) to (?P<n3>.+)$", re.I)
+
 def _route_one(t: str):
     """One unambiguous command -> ("tool", name, args) / ("reply", text) / None."""
     if not t:
         return None
     if routed := _route_alarm(t):
         return routed
+    if m := _NEW_ABILITY.match(t):
+        return ("tool", "get_new_ability", {"need": next(g for g in m.groups() if g).strip(" .?")})
     if _ELSEWHERE.search(t):  # "what is the time in london" - not this laptop's clock
         pass
     elif _DATE_AND_TIME.match(t):
@@ -1076,6 +1088,7 @@ DIRECT_REPLY_TOOLS = {
     "close_browser_tab", "switch_to_browser_tab", "type_text", "send_whatsapp_message",
     "move_status_orb", "set_daily_update_time", "open_website", "get_system_status", "set_radio", "get_weather", "review_logs",
     "app_click", "app_menu", "app_type", "app_keys",  # mcp_servers/windows_apps.py: "Clicked Save in Untitled - Notepad."
+    "get_new_ability",
 }
 
 
