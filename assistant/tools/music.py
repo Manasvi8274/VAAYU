@@ -147,16 +147,28 @@ def hold_for_speech() -> None:
         _held.set()
 
 
+_LISTEN_FOR_COMMAND = 12.0  # after "Vaayu" over the song: how long to wait for the command before resuming
+_listening_until = 0.0
+
+
+def hold_for_listening() -> None:
+    """The user said "Vaayu" while the song played (audio/name_spotter.py): pause now, hear the command clean."""
+    global _listening_until
+    hold_for_speech()
+    _listening_until = time.time() + _LISTEN_FOR_COMMAND
+
+
 def release_after_conversation() -> None:
     """Called when Vaayu finishes a reply: resume the held song if nobody speaks again for a few seconds."""
     global _resume_at
     if _held.is_set():
-        _resume_at = time.time() + _CONVERSATION_GAP
+        _resume_at = max(time.time() + _CONVERSATION_GAP, _listening_until)
 
 
 def user_is_speaking() -> None:
     """The user started another sentence - the conversation goes on, the song stays paused."""
-    global _resume_at
+    global _resume_at, _listening_until
+    _listening_until = 0.0  # the command arrived
     if _held.is_set():
         _resume_at = 0.0
 

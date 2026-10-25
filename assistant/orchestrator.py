@@ -348,6 +348,18 @@ class Orchestrator:
         if daily_review.start_in_background("scheduled"):
             print("Vaayu: started the daily log review in the background.")
 
+    def _on_name_over_music(self, heard: str) -> None:
+        """"Vaayu" said while Vaayu's song plays (audio/name_spotter.py): pause it, drop the music-filled
+        recording, and ask - the command then comes in without the song over it."""
+        from assistant.tools import music
+        music.hold_for_listening()
+        self.listener.interrupt()
+        if self.state is State.SLEEPING:
+            self._set_state(State.AWAKE)
+        self._name_window_until = time.time() + _NAME_WINDOW_SECONDS + 4  # the next sentence is for Vaayu
+        interaction_log.log_event("name_over_music", heard=heard)
+        self._speak("Yes?")
+
     def _watch_stop_request(self) -> None:
         """The "Stop Vaayu" shortcut (assistant/stop.py): finish the current turn, say goodbye, exit 0 -
         the guardian sees an intended exit and stops too. The blocking mic read can't be woken any
@@ -476,6 +488,11 @@ class Orchestrator:
     def run_forever(self) -> None:
         _media_monitor()  # start watching the sound level before the first command
         threading.Thread(target=self._watch_stop_request, daemon=True, name="stop-request").start()
+        if self.continuous:
+            from assistant.audio.name_spotter import NameSpotter
+            from assistant.tools import music
+            NameSpotter(self.listener, self.stt, self._on_name_over_music,
+                        should_listen=lambda: music.player.active and not music.player.paused.is_set())
         from assistant.tools import youtube_taste
         youtube_taste.start_watch_logger()  # what plays on YouTube, whoever started it -> taste
         from assistant import research

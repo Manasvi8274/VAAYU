@@ -68,14 +68,31 @@ class VADListener:
         # baseline (see calibrate_noise_floor) is a second, independent signal
         # that catches what VAD alone missed.
         self._noise_floor_rms = min_absolute_rms
+        self._ring = deque(maxlen=2000 // FRAME_MS)
 
     def _callback(self, indata, _frames, _time_info, _status) -> None:
+        frame = indata.copy().flatten()
+        self._ring.append(frame)  # the last ~2 s, always - the name spotter reads it while a song plays
         if not self._muted:
-            self._queue.put(indata.copy().flatten())
+            self._queue.put(frame)
         elif self.tap is not None:  # while Vaayu speaks: frames go to the "stop" detector instead
-            self.tap(indata.copy().flatten())
+            self.tap(frame)
 
     tap = None  # set by orchestrator's barge-in while speaking; a callable(frame)
+    _ring: "deque[np.ndarray]" = deque(maxlen=2000 // FRAME_MS)
+    _interrupted = False
+
+    def recent_audio(self, seconds: float) -> np.ndarray:
+        """The last `seconds` of mic audio as float32 16 kHz (for spotting the name over music)."""
+        frames = list(self._ring)[-max(1, int(seconds * 1000 / FRAME_MS)):]
+        if not frames:
+            return np.zeros(0, dtype=np.float32)
+        return np.concatenate(frames).astype(np.float32) / 32768.0
+
+    def interrupt(self) -> None:
+        """End the utterance being collected now, with nothing - the song was just paused because the
+        name was heard, so what follows (the command) should be captured fresh, without the music."""
+        self._interrupted = True
 
     def start(self) -> None:
         self._stream = sd.InputStream(
@@ -132,6 +149,9 @@ class VADListener:
         energy_gate = self._noise_floor_rms * self.energy_threshold_multiplier
 
         for frame in frames:
+            if self._interrupted:
+                self._interrupted = False
+                return np.zeros(0, dtype=np.float32)
             is_loud_enough = self._frame_rms(frame) >= energy_gate
             is_speech = is_loud_enough and self.vad.is_speech(frame.tobytes(), SAMPLE_RATE)
 
