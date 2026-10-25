@@ -183,3 +183,34 @@ def test_a_server_vaayu_built_loads_once_its_patch_is_approved(repo):
 def test_the_scanner_flags_password_and_cookie_files_not_the_word_cookies(repo, code, critical):
     f = _write(repo, "x.py", code)
     assert bool(upgrades.scan([upgrades.REPO / f])["critical"]) is critical
+
+
+def test_approve_all_takes_one_yes_and_one_pin_and_never_a_harm_4(repo, monkeypatch):
+    import builtins
+    import getpass
+    monkeypatch.setattr(upgrades, "PIN_FILE", repo / "pin.json")
+    a = upgrades.propose("mcp", "calc", [_write(repo, "calc.py", "def add(a, b):\n    return a + b\n")], claim="adds")
+    b = upgrades.propose("mcp", "runner", [_write(repo, "run.py", "import subprocess\n")], claim="runs programs")
+    c = upgrades.propose("mcp", "bad", [_write(repo, "bad.py", "import winreg\n")], claim="harmless")
+    assert (a["harm"], b["harm"], c["harm"]) == (1, 3, 4)
+    upgrades.set_pin("2468")
+    answers = iter(["all", ""])
+    monkeypatch.setattr(builtins, "input", lambda prompt="": next(answers))
+    monkeypatch.setattr(getpass, "getpass", lambda prompt="": "2468")
+    assert upgrades.cli(["review"]) == 0
+    status = {r["name"]: r["status"] for r in upgrades.reports()}
+    assert status == {"calc": "approved", "runner": "approved", "bad": "pending"}
+
+
+def test_approve_all_with_a_wrong_pin_approves_nothing(repo, monkeypatch):
+    import builtins
+    import getpass
+    monkeypatch.setattr(upgrades, "PIN_FILE", repo / "pin.json")
+    upgrades.propose("mcp", "calc", [_write(repo, "calc.py", "x = 1\n")], claim="x")
+    upgrades.propose("mcp", "runner", [_write(repo, "run.py", "import subprocess\n")], claim="runs programs")
+    upgrades.set_pin("2468")
+    answers = iter(["all", ""])
+    monkeypatch.setattr(builtins, "input", lambda prompt="": next(answers))
+    monkeypatch.setattr(getpass, "getpass", lambda prompt="": "0000")
+    upgrades.cli(["review"])
+    assert {r["status"] for r in upgrades.reports()} == {"pending"}

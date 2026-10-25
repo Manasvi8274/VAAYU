@@ -406,10 +406,41 @@ def pin_ok(pin: str) -> bool:
 def cli(args: list[str]) -> int:
     import getpass
     cmd = args[0] if args else "upgrades"
-    if cmd == "review":  # the "Vaayu Upgrades" desktop shortcut: every pending report, one by one
+    if cmd == "review":  # the "Vaayu Upgrades" desktop shortcut: every pending report - all at once, or one by one
         waiting = pending()
         if not waiting:
             print("Nothing is waiting for your approval.")
+        elif len(waiting) > 1:
+            print(f"{len(waiting)} upgrades are waiting for you:\n")
+            for r in waiting:
+                print(f"  #{r['id']:<3} harm {r['harm']} ({HARM[r['harm']]:<8}) {r['name']:<22} {r['verdict'][:30]:<30} "
+                      f"new powers: {', '.join(r['powers']) or 'none'}")
+            choice = input("\nApprove ALL of them (all), go one by one (one), or none now (no)? ").strip().lower()
+            if choice in ("all", "a", "yes", "y"):
+                if any(r["harm"] >= 3 for r in waiting):
+                    if not PIN_FILE.exists():
+                        print("Some are harm 3 - choose your Guardian PIN now (at least 4 characters).")
+                        if cli(["set-pin"]):
+                            return 1
+                    if not pin_ok(getpass.getpass("Your Guardian PIN: ")):
+                        print("Wrong PIN - nothing approved.")
+                        input("\nPress Enter to close.")
+                        return 1
+                for r in waiting:
+                    if r["harm"] == 4:
+                        print(f"  #{r['id']} {r['name']}: harm 4 is never approved this way - skipped.")
+                        continue
+                    try:
+                        approve(r["id"], by="user (guardian review, approve all)")
+                        print(f"  #{r['id']} {r['name']}: approved.")
+                    except Exception as exc:
+                        print(f"  #{r['id']} {r['name']}: NOT approved - {exc}")
+                print("\nVaayu loads them by himself within a minute.")
+                input("\nPress Enter to close.")
+                return 0
+            if choice not in ("one", "o", "one by one"):
+                input("\nNothing approved. Press Enter to close.")
+                return 0
         for r in waiting:
             print("\n" + "=" * 70 + "\n" + render(r))
             answer = input(f"Approve #{r['id']} '{r['name']}'? (yes / no / later) ").strip().lower()
