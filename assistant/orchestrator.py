@@ -297,6 +297,10 @@ class Orchestrator:
             print(f"Vaayu: (stopped - heard {barge.heard!r})")
             interaction_log.log_event("barge_in", heard=barge.heard, was_saying=text)
             self._name_window_until = time.time() + _NAME_WINDOW_SECONDS  # the next sentence is for Vaayu
+            from assistant.audio.barge_in import is_stop
+            from assistant.llm import router
+            if barge.heard and not is_stop(barge.heard, text) and router.fast_route(barge.heard):
+                self._pending_text = barge.heard  # "open chrome" said over him: the next turn runs it
         return stop.is_set()
 
     def _voice_confirm(self, name: str, arguments: dict) -> bool:
@@ -383,6 +387,14 @@ class Orchestrator:
 
     def handle_one_turn(self) -> None:
         self._maybe_run_daily_checkin()
+        pending, self._pending_text = getattr(self, "_pending_text", None), None
+        if pending:  # a whole command said while cutting Vaayu off - do it, don't make them repeat it
+            self._busy = True
+            try:
+                self._handle_utterance(None, heard=pending)
+            finally:
+                self._busy = False
+            return
         audio = self._capture_utterance()
         if len(audio) == 0:
             return
@@ -394,10 +406,10 @@ class Orchestrator:
         finally:
             self._busy = False
 
-    def _handle_utterance(self, audio) -> None:
+    def _handle_utterance(self, audio, heard: str | None = None) -> None:
         with Timer() as stt_time:
-            text = self.stt.transcribe(audio)
-        audio_seconds = round(len(audio) / _SAMPLE_RATE, 1)
+            text = heard if heard is not None else self.stt.transcribe(audio)
+        audio_seconds = round(len(audio) / _SAMPLE_RATE, 1) if audio is not None else 0.0
         if not text.strip():
             interaction_log.log_event("heard_nothing", audio_seconds=audio_seconds, stt_ms=stt_time.ms,
                                       state=self.state.value)
@@ -405,7 +417,7 @@ class Orchestrator:
 
         print(f"You said: {text}")
         interaction_log.log_event("heard", text=text, state=self.state.value, audio_seconds=audio_seconds,
-                                  stt_ms=stt_time.ms, audio_file=_save_audio(audio))
+                                  stt_ms=stt_time.ms, audio_file=_save_audio(audio) if audio is not None else None)
         command = detect_control_command(text)
         if command is not ControlCommand.NONE:
             interaction_log.log_event("control", command=command.value, text=text, state=self.state.value)

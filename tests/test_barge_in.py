@@ -50,7 +50,8 @@ def _feed(listener, loud_frames=12, quiet_frames=12):
 
 @pytest.mark.parametrize("transcript, speaking, stops", [("Stop.", "Here you go.", True),
                                                         ("Stop.", "Say stop to pause.", False),
-                                                        ("open brave", "Here you go.", False)])
+                                                        ("open brave", "Here you go.", True),  # any real sentence now (user rule)
+                                                        ("here you go", "Here you go.", False)])  # his own echo
 def test_detector_sets_stop_only_for_a_real_stop(transcript, speaking, stops):
     listener, stt, stop = _Listener(), MagicMock(), threading.Event()
     stt.transcribe.return_value = transcript
@@ -99,3 +100,38 @@ def test_speak_reports_a_barge_in_and_invites_the_next_sentence(monkeypatch):
     assert o._speak("a long reply") is True
     assert o._name_window_until > time.time()
     o.listener.unmute.assert_called()
+
+
+@pytest.mark.parametrize("heard, interrupts", [
+    ("open chrome", True), ("no no wait", True), ("what is the weather", True),
+    ("based on what you watch", False),  # his own words coming back
+    ("Okay.", False), ("hmm", False),  # one word that isn't "stop"
+])
+def test_any_real_sentence_cuts_vaayu_off(heard, interrupts):
+    from assistant.audio.barge_in import should_interrupt
+    assert should_interrupt(heard, "Here are three videos based on what you watch.") is interrupts
+
+
+def test_a_command_said_over_vaayu_runs_next_turn(monkeypatch):
+    from assistant import orchestrator
+    o = orchestrator.Orchestrator.__new__(orchestrator.Orchestrator)
+    o.continuous, o.gui_queue, o.stt, o._name_window_until = True, None, MagicMock(), 0.0
+    o.listener, o.tts = MagicMock(), MagicMock()
+    o.tts.speak.side_effect = lambda text, stop_event=None: stop_event.set()
+
+    class FakeBarge:
+        heard = "open chrome"
+
+        def __init__(self, *a):
+            pass
+
+        def close(self):
+            pass
+    monkeypatch.setattr(orchestrator, "BargeIn", FakeBarge)
+    o._speak("a long reply")
+    assert o._pending_text == "open chrome"
+    handled = []
+    monkeypatch.setattr(o, "_handle_utterance", lambda audio, heard=None: handled.append(heard), raising=False)
+    o._maybe_run_daily_checkin = lambda: None
+    o.handle_one_turn()
+    assert handled == ["open chrome"] and o._pending_text is None

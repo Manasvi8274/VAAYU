@@ -1,5 +1,5 @@
 """
-"Stop" while Vaayu is talking: cut the reply off and go back to listening.
+"Stop" - or anything the user says - while Vaayu is talking: cut the reply off and listen.
 
 While Vaayu speaks, the listener is muted (so it doesn't hear itself) and its
 mic frames are tapped here instead. A short burst of speech is transcribed;
@@ -24,6 +24,8 @@ _GATE_MULTIPLIER = 1.3  # calibration knob: x the listener's normal speech gate 
 _SPEECH_FRAMES = 4      # 120 ms of speech starts a capture (a short "stop." missed at 180)
 _END_SILENCE_FRAMES = 10  # 300 ms of quiet ends it
 _MAX_FRAMES = 60        # 1.8 s: stop phrases are short
+_MIN_WORDS = 2          # calibration knob: words of the user's own needed to cut Vaayu off (besides "stop")
+_ECHO_SHARE = 0.6       # this share of the words found in what Vaayu is saying = his own echo
 
 
 def _words(text: str) -> str:
@@ -36,6 +38,21 @@ def is_stop(heard: str, speaking: str) -> bool:
     if not said or not STOP_PHRASE.match(said):
         return False
     return said not in _words(speaking)  # "...say stop to pause" coming back through the mic
+
+
+def is_echo(heard: str, speaking: str) -> bool:
+    """Mostly Vaayu's own words, picked up by the mic."""
+    said, spoken = _words(heard).split(), set(_words(speaking).split())
+    return bool(said) and sum(w in spoken for w in said) / len(said) >= _ECHO_SHARE
+
+
+def should_interrupt(heard: str, speaking: str) -> bool:
+    """User (2026-10-25): "if Vaayu is saying something and then I say something, he should stop reciting
+    and start listening to me instead" - a stop phrase, or any real sentence of theirs (not his own echo)."""
+    if is_stop(heard, speaking):
+        return True
+    words = _words(heard).split()
+    return len(words) >= _MIN_WORDS and not is_echo(heard, speaking)
 
 
 class BargeIn:
@@ -75,7 +92,7 @@ class BargeIn:
                     text = self.stt.transcribe(audio)
                 except Exception:
                     text = ""
-                if is_stop(text, self.speaking):
+                if should_interrupt(text, self.speaking):
                     self.heard = text
                     self.stop.set()
                     return
