@@ -1,4 +1,5 @@
 import contextlib
+import re
 import io
 import subprocess
 import time
@@ -134,6 +135,45 @@ def _proc_exe(p) -> str:
         return ""
 
 
+_START_APPS_CACHE: tuple[float, dict[str, str]] | None = None
+_START_APPS_MAX_AGE = 600  # re-read after 10 minutes, so a freshly installed app shows up
+
+
+def _start_menu_apps() -> dict[str, str]:
+    """Windows' live Start-menu list: name -> AppID (an app path, a store id, or a
+    URL like steam://rungameid/389730 for Steam games)."""
+    global _START_APPS_CACHE
+    if _START_APPS_CACHE and time.time() - _START_APPS_CACHE[0] < _START_APPS_MAX_AGE:
+        return _START_APPS_CACHE[1]
+    import json
+    out = subprocess.run(["powershell", "-NoProfile", "-Command",
+                          "Get-StartApps | ConvertTo-Json -Compress"], capture_output=True, text=True,
+                         timeout=15, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout
+    rows = json.loads(out or "[]")
+    apps = {r["Name"]: r["AppID"] for r in (rows if isinstance(rows, list) else [rows]) if r.get("Name")}
+    _START_APPS_CACHE = (time.time(), apps)
+    return apps
+
+
+def _open_from_start_menu(app_name: str) -> str | None:
+    """Launch the Start-menu app that sounds like app_name; its name, or None if none is close."""
+    import os
+    from assistant.tools.names import sound_key
+    apps = _start_menu_apps()
+    # "open tekken game which is present in my laptop" (real log) - the generic words aren't its name
+    name = re.sub(r"\b(?:game|app|application|software|program|the|my)\b", " ", app_name, flags=re.I)
+    want = sound_key(name)
+    best = max(apps, key=lambda n: __import__("difflib").SequenceMatcher(None, want, sound_key(n)).ratio(), default=None)
+    if not best or __import__("difflib").SequenceMatcher(None, want, sound_key(best)).ratio() < 0.75:
+        return None
+    app_id = apps[best]
+    if "://" in app_id:  # steam://rungameid/..., http://... - the URL's own handler launches it
+        os.startfile(app_id)
+    else:
+        subprocess.Popen(["explorer", f"shell:AppsFolder\\{app_id}"])
+    return best
+
+
 @registry.register(
     name="open_app",
     description=(
@@ -172,8 +212,14 @@ def open_app(app_name: str, foreground: bool = True) -> str:
     if browser_reply:
         return browser_reply
     resolved_name = _resolve_open_app_name(app_name)
-    with _quiet_stdout():
-        app_open(resolved_name, match_closest=True, output=True, throw_error=True)
+    try:
+        with _quiet_stdout():
+            app_open(resolved_name, match_closest=True, output=True, throw_error=True)
+    except Exception as exc:
+        # AppOpener's app list is a snapshot from when it was built - found live, Tekken 7
+        # (installed later) failed with its "TEKKEN 7 is not running" (= not found).
+        if not _open_from_start_menu(app_name):
+            raise RuntimeError(f"I couldn't find an app called {app_name} on this laptop.") from exc
     browser_state.note_app_opened(app_name)
     if foreground:
         foreground_by_title(app_name)

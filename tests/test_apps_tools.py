@@ -61,7 +61,9 @@ def test_open_app_propagates_not_found_as_a_real_failure():
     # exception (which registry.dispatch turns into ok: False) - never a
     # silent no-op that still returns a success-shaped string.
     with patch.object(apps, "app_open", side_effect=_FakeAppNotFound("NOPE")):
-        with pytest.raises(_FakeAppNotFound):
+        # (and not in the live Start menu either): a plain "couldn't find", not AppOpener's
+        # misleading "X is not running"
+        with pytest.raises(RuntimeError, match="couldn't find an app called some_nonexistent_app_xyz"):
             apps.open_app("some_nonexistent_app_xyz")
 
 
@@ -182,3 +184,14 @@ def test_non_browser_apps_still_use_appopener():
         apps.open_app("notepad")
     app_open.assert_called_once()
 
+
+
+def test_app_missing_from_appopeners_old_list_opens_from_the_live_start_menu(monkeypatch):
+    # Real log: Tekken 7 was installed after AppOpener's list was built -> "TEKKEN 7 is not running".
+    from assistant.tools import apps
+    launched = []
+    monkeypatch.setattr(apps, "_start_menu_apps", lambda: {"TEKKEN 7": "steam://rungameid/389730", "Notepad": "x!App"})
+    monkeypatch.setattr("os.startfile", lambda target: launched.append(target))
+    assert apps._real_open_from_start_menu("tekken game") == "TEKKEN 7"
+    assert launched == ["steam://rungameid/389730"]
+    assert apps._real_open_from_start_menu("some made up app") is None

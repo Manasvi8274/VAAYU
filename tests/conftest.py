@@ -188,3 +188,14 @@ def _isolated_watch_history(tmp_path_factory):
         mp.setattr(youtube_taste, "HISTORY_PATH", tmp_path_factory.mktemp("taste") / "watch_history.jsonl")
         mp.setattr(youtube_taste, "start_watch_logger", lambda: None)
         yield
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _no_real_start_menu_launch():
+    # open_app's fallback reads Windows' Start menu (PowerShell) and LAUNCHES the match
+    # (os.startfile / explorer) - tests may never start a real app.
+    from assistant.tools import apps
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(apps, "_real_open_from_start_menu", apps._open_from_start_menu, raising=False)
+        mp.setattr(apps, "_open_from_start_menu", lambda name: None)
+        yield
