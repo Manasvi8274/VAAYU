@@ -332,8 +332,15 @@ def _split_known_contact(rest: str):
     from assistant.tools import names
     for name in sorted(names.load()["contact"], key=len, reverse=True):
         if rest.lower().startswith(name.lower() + " ") and rest[len(name):].strip():
-            return name, rest[len(name):].strip()
+            message = rest[len(name):].strip()
+            if _ANOTHER_RECIPIENT.search(message):  # "SAVED MESSAGES call mom": is mom the chat? Don't guess.
+                return None
+            return name, message
     return None
+
+
+_ANOTHER_RECIPIENT = re.compile(r"\b(?:call|tell|message|text|ask|ping|whatsapp)\s+(?!(?:the|a|an|me|us|it|back|later)\b)\w+",
+                                re.I)
 
 
 _READ_PAGE = re.compile(r"^(?:summari[sz]e|read(?: out)?|explain) (?:this|the|current) (?:page|article|website|site|tab)$|"
@@ -343,6 +350,17 @@ _ORB = re.compile(r"^(?:move|put|place|shift|send)(?: the)? (?:status )?(?:orb|b
                   r"(?P<pos>.+?)(?: corner| of the screen| side)?$", re.I)
 _UPDATE_TIME = re.compile(r"^(?:set|change|move|make)(?: my| the)?(?: daily)? (?:update|check-in|check in|checkin) time"
                           r"(?: to| at)? (?P<t>\d{1,2}(?::\d{2})?(?: ?[ap]\.?m\.?)?)$", re.I)
+def _clock(said: str) -> str:
+    """"9 pm" -> "21:00", "10:30" -> "10:30" (no am/pm: as said)."""
+    m = re.match(r"(\d{1,2})(?::(\d{2}))?\s*([ap])?", said.strip().lower())
+    hour, minute, half = int(m.group(1)), m.group(2) or "00", m.group(3)
+    if half == "p" and hour < 12:
+        hour += 12
+    elif half == "a" and hour == 12:
+        hour = 0
+    return f"{hour:02d}:{minute}" if half or m.group(2) else said.strip()
+
+
 _MULTI_RECIPIENT = re.compile(r"\s(?:and|aur|&)\s|,", re.I)
 WHATSAPP_HOWTO = ("I only send WhatsApp messages when you say the chat and the message clearly, like: "
                   "send hello to SAVED MESSAGES on WhatsApp.")
@@ -505,7 +523,7 @@ def _route_one(t: str):
     if m := _ORB.match(t):
         return ("tool", "move_status_orb", {"position": m.group("pos").strip()})
     if m := _UPDATE_TIME.match(t):
-        return ("tool", "set_daily_update_time", {"time": m.group("t").strip()})
+        return ("tool", "set_daily_update_time", {"time": _clock(m.group("t"))})
     if m := _WA_BARE.match(t):  # "message SAVED MESSAGES buy milk on whatsapp" - no word between chat and message
         if split := _split_known_contact(m.group("rest")):
             return ("tool", "send_whatsapp_message", {"contact_name": split[0], "message": split[1]})
@@ -592,7 +610,12 @@ def fast_route(text: str):
     if len(parts) > 1:
         routed = _route_parts(parts)
         if all(r and r[0] in ("tool", "multi") for r in routed):
-            return ("tools", [call for r in routed for call in _calls(r)])
+            calls = [call for r in routed for call in _calls(r)]
+            # play_video_on_youtube opens YouTube itself - a separate "open youtube" first is a wasted step
+            calls = [c for i, c in enumerate(calls) if not (
+                c == ("open_website", {"url_or_query": "youtube.com"}) and i + 1 < len(calls)
+                and calls[i + 1][0] == "play_video_on_youtube")]
+            return ("tools", calls)
     one = _route_one(t)
     if one:
         return one if one[0] == "reply" else ("tools", _calls(one))

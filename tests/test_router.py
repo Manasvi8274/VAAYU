@@ -233,6 +233,7 @@ def test_volume_change_without_the_word_volume(text, level):
     ("message SAVED MESSAGES buy milk on whatsapp", ("SAVED MESSAGES", "buy milk")),
     ("message Raman Garg send the report on whatsapp", ("Raman Garg", "send the report")),
     ("message mom I will be late on whatsapp", None),  # unknown chat: where the name ends is a guess - not routed
+    ("message SAVED MESSAGES call mom on whatsapp", None),  # is mom the chat? - not routed (holdout2)
 ])
 def test_bare_whatsapp_message_splits_only_on_a_known_chat(text, want):
     routed = router.fast_route(text)
@@ -246,12 +247,9 @@ def test_bare_whatsapp_message_splits_only_on_a_known_chat(text, want):
     ("summarize this page", ("read_page", {})),
     ("put the ball in the bottom left corner", ("move_status_orb", {"position": "bottom left"})),
     ("change check-in time to 10:30", ("set_daily_update_time", {"time": "10:30"})),
-    ("open youtube and play kesariya", None),
+    ("set my daily update time to 9 pm", ("set_daily_update_time", {"time": "21:00"})),
+    # play_video_on_youtube opens YouTube itself - no separate open step first
+    ("open youtube and play kesariya", ("play_video_on_youtube", {"query": "kesariya"})),
 ])
 def test_overnight_benchmark_misses(text, want):
-    routed = router.fast_route(text)
-    if want is None:
-        assert routed == ("tools", [("open_website", {"url_or_query": "youtube.com"}),
-                                    ("play_video_on_youtube", {"query": "kesariya"})])
-    else:
-        assert routed == ("tools", [want])
+    assert router.fast_route(text) == ("tools", [want])
