@@ -12,8 +12,10 @@ from assistant.tools.registry import ToolRegistry
 
 @pytest.fixture(autouse=True)
 def fresh_memory(tmp_path, monkeypatch):
+    from assistant import knowledge
     monkeypatch.setattr(memory, "CONVERSATIONS_PATH", tmp_path / "conversations.jsonl")
     monkeypatch.setattr(memory, "FACTS_PATH", tmp_path / "memory_facts.json")
+    monkeypatch.setattr(knowledge, "DIR", tmp_path / "knowledge")  # facts live in the knowledge store now
 
 
 @pytest.fixture

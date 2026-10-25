@@ -82,6 +82,16 @@ class SelfReviewConfig(BaseModel):
     claude_fix: bool = True
 
 
+class ResearchConfig(BaseModel):
+    # Learning about the world while idle (assistant/research.py): topics from the user's own
+    # questions and their YouTube taste, summarised into knowledge notes. Budgeted, and only when
+    # nobody has spoken for idle_minutes and nothing is playing.
+    enabled: bool = True
+    per_hour: int = 6
+    per_day: int = 40
+    idle_minutes: int = 10
+
+
 class AppConfig(BaseModel):
     llm: LLMConfig = LLMConfig()
     activation: ActivationConfig = ActivationConfig()
@@ -92,6 +102,7 @@ class AppConfig(BaseModel):
     files: FilesConfig = FilesConfig()
     logging: LoggingConfig = LoggingConfig()
     self_review: SelfReviewConfig = SelfReviewConfig()
+    research: ResearchConfig = ResearchConfig()
 
 
 # Repo root, computed from this file's own location rather than the current

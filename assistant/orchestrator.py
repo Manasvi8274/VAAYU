@@ -446,6 +446,8 @@ class Orchestrator:
         _media_monitor()  # start watching the sound level before the first command
         from assistant.tools import youtube_taste
         youtube_taste.start_watch_logger()  # what plays on YouTube, whoever started it -> taste
+        from assistant import research
+        research.start(self.config, self.brain.client)  # reads about their topics while idle
         if self.continuous:
             self.listener.start()
             print(

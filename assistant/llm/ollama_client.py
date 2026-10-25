@@ -21,7 +21,7 @@ from assistant import memory
 from assistant.llm import router
 from assistant.llm.prompts import BROTHER_PROMPT
 from assistant.self_review import issue_log
-from assistant.tools import names, notes
+from assistant.tools import names, notes, web_answer
 from assistant.tools.registry import ToolRegistry
 
 _CODE_BLOCK_RE = re.compile(r"```.*?```", re.DOTALL)
@@ -167,7 +167,7 @@ _FORGET_ALL = re.compile(r"^(?:forget|bhool jao?) (?:everything|all of it|sab ku
 _FORGET_ABOUT = re.compile(r"^forget (?:what i (?:told|said to) you |everything i (?:told|said to) you )?about (?P<a>.+)$|"
                            r"^(?P<a2>.+?) (?:ke baare mein |wali baat )?bhool jao?$", re.I)
 _CHAT_TURNS = 6
-_CHAT_FACTS = 40
+_CHAT_FACTS = 8
 
 
 def _is_conversation(text: str) -> bool:
@@ -299,7 +299,7 @@ class OllamaBrain:
             reply = "Done, I've forgotten that." if removed else "I didn't have anything saved about that."
             return reply, messages + [{"role": "assistant", "content": reply}]
         system = BROTHER_PROMPT + _now_line()
-        if known := memory.facts(_CHAT_FACTS):
+        if known := memory.facts_for(user_text, k=_CHAT_FACTS):  # the relevant ones + the newest few
             system += "\nWhat you remember about them:\n" + "\n".join(f"- {f}" for f in known)
         try:
             saved = [n["text"] for n in notes.list_notes(5)]
@@ -385,10 +385,12 @@ class OllamaBrain:
                         issue_log.log_issue(user_said=last_user_text, tool_name=name, error=error_text)
                         replies.append(f"That didn't work - {error_text}")
                         break
-                    replies.append(
-                        router.format_result(name, tool_result.get("result"))
-                        or self._phrase_result(last_user_text, name, tool_result.get("result"))
-                    )
+                    spoken = router.format_result(name, tool_result.get("result"))
+                    if not spoken:
+                        spoken = self._phrase_result(last_user_text, name, tool_result.get("result"))
+                        if name == "answer_question":  # instant next time (weather/time never reach here)
+                            web_answer.remember_answer(arguments.get("question", last_user_text), spoken)
+                    replies.append(spoken)
                 reply = " ".join(replies)
                 return reply, messages + [{"role": "assistant", "content": reply}]
             steps = router.split_steps(last_user_text)
