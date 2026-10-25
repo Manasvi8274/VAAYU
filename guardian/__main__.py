@@ -16,5 +16,9 @@ if __name__ == "__main__":
         _say(core.kill_all())
     elif command == "status":
         _say(core.status())
+    elif command in ("upgrades", "review", "show", "approve", "reject", "set-pin"):
+        from guardian import upgrades
+        sys.exit(upgrades.cli(sys.argv[1:]))
     else:
-        sys.exit(f"Unknown command '{command}' - use run, kill or status.")
+        sys.exit(f"Unknown command '{command}' - use run, kill, status, upgrades, show N, approve N, reject N "
+                 "or set-pin.")

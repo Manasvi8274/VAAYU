@@ -69,3 +69,9 @@ yt-dlp
 # Memory + knowledge search by meaning (assistant/knowledge.py): BAAI/bge-small-en-v1.5 on the CPU,
 # ~130 MB, downloaded once into models/fastembed; ~180 MB RAM, ~15-30 ms per search
 fastembed
+# MCP: Vaayu's tool servers (mcp_servers/, loaded by assistant/mcp_tools.py only once the Guardian
+# approved them - guardian/upgrades.py). uiautomation: working inside any app by its controls' names.
+mcp>=2
+uiautomation
+# Guardian's upgrade report: code-safety scan of every upgrade
+bandit

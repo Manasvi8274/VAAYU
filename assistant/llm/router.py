@@ -542,6 +542,87 @@ _ALARM_CANCEL = re.compile(r"\b(?:cancel|delete|remove|turn off|clear)(?: all)?(
                            r"(?: (?:for|at) (?P<w>[\d:. apm]+))?\b|\balarm (?:hatao|band karo|cancel karo)\b", re.I)
 
 
+# Working INSIDE an app (mcp_servers/windows_apps.py, once the Guardian approved it): "click save in notepad",
+# "in calculator press equals", "type hello in notepad", "press ctrl+s in paint", "what does notepad say",
+# "what can you do in calculator", "open file then save as in notepad". Only for an app that's open on the
+# screen - "type I live in delhi" is dictation, not Delhi - and never a web page (click_on_page has those).
+_APP = r"(?:the )?(?P<app>[\w .+&-]{2,30}?)(?: app| window)?"
+_IN_APP = [(re.compile(p, re.I), tool) for p, tool in [
+    (rf"^(?:press|hit) (?P<keys>(?:ctrl|control|alt|shift|win|windows|f\d{{1,2}}|enter|escape|esc|tab|delete|"
+     rf"backspace)(?:\s*\+\s*[\w]+)*) (?:in|on) {_APP}$", "app_keys"),
+    (rf"^(?:click|press|tap|hit|select|choose)(?: on)?(?: the)? (?P<target>.+?)(?: button| option| tab| icon)? "
+     rf"(?:in|on) {_APP}$", "app_click"),
+    (rf"^(?:in|on) {_APP},? (?:click|press|tap|hit|select|choose)(?: on)?(?: the)? (?P<target>.+?)(?: button)?$",
+     "app_click"),
+    (rf"^{_APP} (?:mein|me|pe|par) (?P<target>.+?) (?:pe |par )?(?:click karo|click kar do|dabao|daba do|press karo)$",
+     "app_click"),
+    (rf"^(?:open|go to|click) (?P<path>[\w ]+?(?: > | then | and then )[\w >]+?) (?:in|on) {_APP}$", "app_menu"),
+    (rf"^(?:in|on) {_APP},? (?:open|go to|click) (?P<path>[\w ]+?(?: > | then | and then )[\w >]+)$", "app_menu"),
+    (rf"^(?:type|write)(?: out)? (?P<text>.+?) (?:in|into|on) {_APP}$", "app_type"),
+    (rf"^(?:in|on) {_APP},? (?:type|write) (?P<text>.+)$", "app_type"),
+    (rf"^{_APP} (?:mein|me) (?P<text>.+?) likho$", "app_type"),
+    (rf"^(?:read|read out)(?: what'?s in)? {_APP}$", "app_read"),
+    (rf"^what (?:does|is) {_APP} (?:say|show|saying|showing)$", "app_read"),
+    (rf"^what(?:'s| is) (?:on|in|written in) {_APP}$", "app_read"),
+    (rf"^what can (?:you|i) (?:do|click|press) (?:in|on) {_APP}$", "app_controls"),
+    (rf"^(?:show|list|tell)(?: me)?(?: the| all)? (?:buttons|options|controls|menus)(?: of| in| on) {_APP}$",
+     "app_controls"),
+]]
+_NOT_IN_APP = re.compile(r"\b(?:youtube|video|page|website|site|browser|tab|google|link|channel|playlist)\b", re.I)
+
+
+def _open_window_matches(app: str) -> bool:
+    """An app by this name is open on the screen (its window's title or program name)."""
+    import difflib
+    try:
+        import psutil
+        import win32gui
+        import win32process
+    except ImportError:
+        return False
+    want = app.lower().strip()
+    found = []
+
+    def look(hwnd, _):
+        if win32gui.IsWindowVisible(hwnd) and win32gui.GetWindowText(hwnd):
+            title = win32gui.GetWindowText(hwnd).lower()
+            try:
+                exe = psutil.Process(win32process.GetWindowThreadProcessId(hwnd)[1]).name().lower()
+            except psutil.Error:
+                exe = ""
+            parts = [title, exe.removesuffix(".exe")] + re.split(r"\s+[-|\u2014]\s+", title)
+            if any(re.search(rf"\b{re.escape(want)}\b", x) or difflib.SequenceMatcher(None, want, x).ratio() >= 0.8
+                   for x in parts):
+                found.append(hwnd)
+    try:
+        win32gui.EnumWindows(look, None)
+    except Exception:
+        return False
+    return bool(found)
+
+
+def _route_in_app(t: str):
+    from assistant.tools.registry import registry
+    for pattern, tool in _IN_APP:
+        m = pattern.match(t)
+        if not m:
+            continue
+        app = m.group("app").strip()
+        if _NOT_IN_APP.search(t) or not _open_window_matches(app):
+            return None
+        if tool not in registry._tools:  # the upgrade isn't approved yet: typing still works the old way
+            if tool == "app_type":
+                return ("tool", "type_text", {"text": m.group("text").strip()})
+            from assistant import mcp_tools
+            return ("reply", mcp_tools.waiting_for(tool) or "I can't work inside apps yet.")
+        args = {"app": app}
+        for k in ("target", "path", "text", "keys"):
+            if k in m.groupdict() and m.group(k):
+                args[k] = m.group(k).strip()
+        return ("tool", tool, args)
+    return None
+
+
 def _route_one(t: str):
     """One unambiguous command -> ("tool", name, args) / ("reply", text) / None."""
     if not t:
@@ -679,6 +760,8 @@ def _route_one(t: str):
         return ("tool", "open_website", {"url_or_query": m.group("url") or m.group("site")})
     if (m := _WEB_SEARCH.match(t)) and not _LOCAL_HINT.search(t):
         return ("tool", "open_website", {"url_or_query": m.group("q")})
+    if routed := _route_in_app(t):
+        return routed
     if m := _TYPE.match(t):
         return ("tool", "type_text", {"text": m.group("text") or m.group("t2") or m.group("t3")})
     if len(t.split()) <= 7 and _QUESTION.search(t) and not re.search(r"\b(open|close|band|kholo|turn on|turn off)\b", t, re.I):
@@ -992,6 +1075,7 @@ DIRECT_REPLY_TOOLS = {
     "add_note", "set_video_volume", "set_video_fullscreen", "seek_video", "control_video_playback",
     "close_browser_tab", "switch_to_browser_tab", "type_text", "send_whatsapp_message",
     "move_status_orb", "set_daily_update_time", "open_website", "get_system_status", "set_radio", "get_weather", "review_logs",
+    "app_click", "app_menu", "app_type", "app_keys",  # mcp_servers/windows_apps.py: "Clicked Save in Untitled - Notepad."
 }
 
 

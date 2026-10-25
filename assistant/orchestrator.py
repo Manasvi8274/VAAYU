@@ -547,6 +547,8 @@ class Orchestrator:
                         should_listen=lambda: music.player.active and not music.player.paused.is_set())
         from assistant.tools import youtube_taste
         youtube_taste.start_watch_logger()  # what plays on YouTube, whoever started it -> taste
+        from assistant import mcp_tools  # the MCP servers the Guardian approved (and only those)
+        threading.Thread(target=mcp_tools.load_all, daemon=True, name="mcp-load").start()
         from assistant import research
         research.start(self.config, self.brain.client)  # reads about their topics while idle
         if self.continuous:

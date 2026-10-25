@@ -400,7 +400,7 @@ def build_holdout2():
     return H
 
 
-def _stub_dispatch(self, name, arguments):
+def _stub_dispatch(self, name, arguments, after_content=False, path=""):
     # Same contract as real ToolRegistry.dispatch, minus the side effects.
     spec = registry._tools.get(name)
     if spec is None:

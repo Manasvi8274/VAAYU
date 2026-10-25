@@ -247,3 +247,17 @@ def test_a_moved_game_opens_from_where_it_is_now_and_a_deleted_one_is_said_plain
 def test_force_close_only_when_said(said, want):
     from assistant.llm import router
     assert router.fast_route(said) == ("tools", [("close_app", want)])
+
+
+@pytest.mark.parametrize("title, app, want", [
+    ("New tab - Microsoft Edge", "microsoft edge", True),
+    ("New tab - Microsoft Edge", "edge", True),
+    ("notes.txt - Visual Studio Code", "visual studio code", True),
+    ("Inbox - Outlook", "microsoft edge", False),
+    ("Edgerunners wiki - Brave", "edge", False),  # a word, not part of one
+])
+def test_a_new_window_of_an_already_running_program_is_ours_only_if_its_title_names_the_app(monkeypatch, title, app, want):
+    import win32gui
+    from assistant.tools import apps
+    monkeypatch.setattr(win32gui, "GetWindowText", lambda hwnd: title)
+    assert apps._titled(1, app) is want

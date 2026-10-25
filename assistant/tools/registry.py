@@ -75,6 +75,8 @@ class ToolRegistry:
         spec = self._tools[name]
         if spec.confirmation_prompt is not None:
             return spec.confirmation_prompt(arguments)
+        if arguments.get("app") and arguments.get("target"):  # "click Send" inside an app (windows_apps)
+            return f"Should I click {arguments['target']} in {arguments['app']}?"
         args_text = ", ".join(f"{k}: {v}" for k, v in arguments.items())
         return f"Should I go ahead with {spec.name.replace('_', ' ')} ({args_text})?"
 

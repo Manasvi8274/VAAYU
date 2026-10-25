@@ -1,0 +1,9 @@
+[
+ {
+  "name": "windows-apps",
+  "about": "Work inside any open app: click its buttons and menus, type into it, press its shortcuts, read it",
+  "files": ["mcp_servers/windows_apps.py"],
+  "command": ["{python}", "-m", "mcp_servers.windows_apps"],
+  "tools": ["app_controls", "app_click", "app_menu", "app_type", "app_keys", "app_read"]
+ }
+]

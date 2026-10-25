@@ -207,6 +207,17 @@ def _proc_name(pid: int) -> str:
         return ""
 
 
+def _titled(hwnd: int, app_name: str) -> bool:
+    """The window's title names the app ("New tab - Microsoft Edge" for "microsoft edge"/"edge")."""
+    import win32gui
+    try:
+        title = win32gui.GetWindowText(hwnd).lower()
+    except Exception:
+        return False
+    words = [w for w in re.findall(r"[a-z0-9]+", app_name.lower()) if w not in ("microsoft", "the", "app")]
+    return bool(words) and all(re.search(rf"\b{re.escape(w)}\b", title) for w in words)
+
+
 def _is_part_of(pid: int, app_pids: set[int], store_app: bool) -> bool:
     """A windowless new process is the app's only if the app started it (a child of its own process), or
     it's a Store app's process (WindowsApps) when a Store window just opened. Anything else that merely
@@ -232,13 +243,19 @@ def _track_opened(app_name: str, before: set[int], before_windows: set[int]) -> 
             time.sleep(0.5)
             new_pids = _pids() - before
             for hwnd, pid in _windows().items():
+                if hwnd in before_windows:
+                    continue
                 # a new window - of a new process, or of a shared host (a Store app's frame)
-                if hwnd not in before_windows and (pid in new_pids or _proc_name(pid) in _SHARED_HOSTS):
+                if pid in new_pids or _proc_name(pid) in _SHARED_HOSTS:
                     hwnds.add(hwnd)
                     if _proc_name(pid) in _SHARED_HOSTS:
                         store_app = True
                     else:
                         pids.add(pid)
+                elif _titled(hwnd, app_name):
+                    # A program already running in the background (Edge's startup boost) opened it: just
+                    # this window is ours, never its process - that holds the user's other windows too.
+                    hwnds.add(hwnd)
             for pid in new_pids - pids:  # the app's own windowless processes (a Store app's CalculatorApp.exe...)
                 if hwnds and _proc_name(pid) not in _SHARED_HOSTS and _is_part_of(pid, pids, store_app):
                     pids.add(pid)
