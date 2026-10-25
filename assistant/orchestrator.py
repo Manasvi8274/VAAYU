@@ -182,6 +182,25 @@ def _media_playing() -> bool:
         return False
 
 
+_COMMON_REPLIES = ["Yes? I'm listening.", "Yes?", "Okay.", "Playing.", "Paused.", "Okay, no problem.", "You're welcome!",
+                   "Opened Brave.", "Opened WhatsApp.", "Sorry, I didn't get that - could you say it again?"]
+
+
+def _frequent_replies(n: int = 60) -> list[str]:
+    """The replies Vaayu says most (from the interaction log), short ones only - worth having ready."""
+    from collections import Counter
+    counts = Counter()
+    try:
+        for line in interaction_log.LOG_PATH.read_text(encoding="utf-8").splitlines()[-3000:]:
+            if '"kind": "turn"' in line:
+                reply = __import__("json").loads(line).get("reply") or ""
+                if 0 < len(reply) <= 80:
+                    counts[reply] += 1
+    except (OSError, ValueError):
+        pass
+    return list(dict.fromkeys(_COMMON_REPLIES + [r for r, _ in counts.most_common(n)]))
+
+
 def _make_tts(cfg):
     """Kokoro if configured and its files load, else Windows' built-in voice - never no voice."""
     if cfg.engine == "kokoro":
@@ -189,6 +208,7 @@ def _make_tts(cfg):
             from assistant.tts.kokoro_engine import KokoroEngine
             engine = KokoroEngine(voice=cfg.voice, speed=cfg.speed, device=cfg.device)
             print(f"Vaayu: Kokoro voice '{cfg.voice}' on the {engine.device}.")
+            engine.prewarm(_frequent_replies())
             return engine
         except Exception as exc:
             print(f"Vaayu: Kokoro voice unavailable ({exc}) - using the Windows voice.")

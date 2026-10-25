@@ -33,7 +33,7 @@ class TTSConfig(BaseModel):
     engine: str = "kokoro"  # "kokoro" (natural voice, models/kokoro) or "pyttsx3" (Windows' built-in voice)
     voice: str = "hm_psi"  # Kokoro voice - hm_psi: Indian male; bm_george: British male; af_heart: US female
     speed: float = 1.05
-    device: str = "auto"  # Kokoro on the GPU when there's room, else the CPU
+    device: str = "cpu"  # Kokoro runs on the CPU (see tts/kokoro_engine.py for why not the GPU)
 
 
 class STTConfig(BaseModel):

@@ -49,3 +49,15 @@ def test_missing_kokoro_files_fall_back_to_the_windows_voice(tmp_path, monkeypat
     from assistant.tts.pyttsx3_engine import Pyttsx3Engine
     monkeypatch.setattr(kokoro_engine, "MODEL_DIR", tmp_path)  # empty: no model files
     assert isinstance(orchestrator._real_make_tts(TTSConfig()), Pyttsx3Engine)
+
+
+def test_short_replies_are_cached_long_ones_are_not():
+    e = KokoroEngine.__new__(KokoroEngine)
+    e.voice, e.speed, e._cache = "hm_psi", 1.0, {}
+    e.kokoro = MagicMock()
+    e.kokoro.create.return_value = (np.zeros(10, np.float32), 24000)
+    e._synth("Opened Brave.")
+    e._synth("Opened Brave.")
+    e._synth("x" * 200)
+    e._synth("x" * 200)
+    assert e.kokoro.create.call_count == 3

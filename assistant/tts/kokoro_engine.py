@@ -1,10 +1,14 @@
 """
 Kokoro TTS (82M, ONNX): a natural voice instead of Windows' SAPI one.
 
-Measured on this laptop: on the GTX 1650, ~0.12 s of synthesis per second of
-speech ("Opened Brave." in 0.25 s); on the CPU ~0.5 s per second. Long
-replies are spoken sentence by sentence - the next sentence is synthesised
-while the current one plays - so the first words come out almost at once.
+Runs on the CPU (~0.5 s of synthesis per second of speech here). The GPU was
+tried and dropped: onnxruntime's CUDA build crashed Vaayu at startup
+(0xC0000409, "cudnnGetLibConfig" - CTranslate2, onnxruntime and torch each
+bring their own cuDNN into the one process), and DirectML can't run
+Kokoro's ConvTranspose layers. To stay quick: replies are spoken sentence
+by sentence (the next is synthesised while the current one plays), and the
+audio of replies already said is cached ("Opened Brave." is instant the
+second time).
 
 Default voice hm_psi: an Indian male voice, the clearest of the six tried
 (6.6% word errors when the speech model transcribed what it said).
@@ -26,13 +30,18 @@ import sounddevice as sd
 from assistant.tts.base import TTSEngine
 
 MODEL_DIR = Path(__file__).resolve().parent.parent.parent / "models" / "kokoro"
-_GPU_MIB = 1100  # measured: +1.1 GB on the GPU after a few replies
-_GPU_ARENA_LIMIT = 1200 * 1024 * 1024  # hard cap so the 4 GB card never overflows into system RAM
 _SENTENCE = re.compile(r"(?<=[.!?])\s+")
+_CLAUSE = re.compile(r"(?<=[,;:])\s+|\s+(?=- )")
+_CACHE_SIZE = 300
+_CACHE_MAX_CHARS = 80
 
 
 def _sentences(text: str) -> list[str]:
-    parts = [p.strip() for p in _SENTENCE.split(text.strip()) if p.strip()]
+    parts = []
+    for sentence in (p.strip() for p in _SENTENCE.split(text.strip()) if p.strip()):
+        # Long sentences go by clause: on the CPU the first sound comes sooner (live: a 4 s weather
+        # sentence took 2 s before anything played).
+        parts += [c.strip() for c in _CLAUSE.split(sentence) if c.strip()] if len(sentence) > 50 else [sentence]
     out: list[str] = []
     for p in parts:  # very short bits ("Okay.") ride along with the next sentence - fewer gaps
         if out and len(out[-1]) < 12:
@@ -43,34 +52,40 @@ def _sentences(text: str) -> list[str]:
 
 
 class KokoroEngine(TTSEngine):
-    def __init__(self, voice: str = "hm_psi", speed: float = 1.05, device: str = "auto"):
+    def __init__(self, voice: str = "hm_psi", speed: float = 1.05, device: str = "cpu"):
         import onnxruntime as ort
         from kokoro_onnx import Kokoro
         model, voices = MODEL_DIR / "kokoro-v1.0.onnx", MODEL_DIR / "voices-v1.0.bin"
         if not model.exists() or not voices.exists():
             raise FileNotFoundError(f"Kokoro model files not found in {MODEL_DIR}")
-        providers = ["CPUExecutionProvider"]
-        self.device = "cpu"
-        if device in ("auto", "cuda"):
-            from assistant.stt.whisper_stt import _GPU_MARGIN_MIB, _gpu_free_mib
-            if _gpu_free_mib() >= _GPU_MIB + _GPU_MARGIN_MIB:
-                try:
-                    ort.preload_dlls()
-                except Exception:
-                    pass
-                providers = [("CUDAExecutionProvider", {"gpu_mem_limit": _GPU_ARENA_LIMIT,
-                                                        "arena_extend_strategy": "kSameAsRequested"}),
-                             "CPUExecutionProvider"]
-        session = ort.InferenceSession(str(model), providers=providers)
-        if "CUDAExecutionProvider" in session.get_providers():
-            self.device = "cuda"
+        self.device = "cpu"  # see the module docstring for why not the GPU
+        session = ort.InferenceSession(str(model), providers=["CPUExecutionProvider"])
+        self._cache: dict[str, tuple[np.ndarray, int]] = {}
         self.kokoro = Kokoro.from_session(session, str(voices))
         self.voice, self.speed = voice, speed
         self._synth("Ready.")  # first call is slow (kernel setup) - pay it at startup, not on the first reply
 
     def _synth(self, text: str) -> tuple[np.ndarray, int]:
+        if text in self._cache:
+            return self._cache[text]
         samples, rate = self.kokoro.create(text, voice=self.voice, speed=self.speed, lang="en-us")
-        return np.asarray(samples, dtype=np.float32), rate
+        out = np.asarray(samples, dtype=np.float32), rate
+        if len(text) <= _CACHE_MAX_CHARS:  # short, repeatable replies ("Playing.", "Opened Brave.")
+            if len(self._cache) >= _CACHE_SIZE:
+                self._cache.pop(next(iter(self._cache)))  # oldest first
+            self._cache[text] = out
+        return out
+
+    def prewarm(self, replies: list[str]) -> None:
+        """Synthesise frequent replies in the background, so they play instantly the first time too."""
+        def run():
+            for text in replies:
+                for part in _sentences(text):
+                    try:
+                        self._synth(part)
+                    except Exception:
+                        return
+        threading.Thread(target=run, daemon=True, name="kokoro-prewarm").start()
 
     def speak(self, text: str, stop_event=None) -> None:
         self.speak_with_amplitude(text, stop_event=stop_event)

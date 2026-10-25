@@ -61,11 +61,6 @@ indic-transliteration
 # torch (CUDA build), transformers, peft, accelerate, bitsandbytes
 
 # Natural voice (assistant/tts/kokoro_engine.py) - model files in models/kokoro (kokoro-onnx release
-# model-files-v1.0: kokoro-v1.0.onnx + voices-v1.0.bin). onnxruntime-gpu 1.23 = CUDA 12 build (1.24+ needs CUDA 13);
-# it replaces plain onnxruntime (faster-whisper's VAD runs on it too). Without these: Windows' voice.
+# model-files-v1.0: kokoro-v1.0.onnx + voices-v1.0.bin). CPU onnxruntime on purpose - its CUDA build
+# crashed Vaayu (three cuDNN copies in one process); see kokoro_engine.py. Without these: Windows' voice.
 kokoro-onnx
-onnxruntime-gpu==1.23.2
-nvidia-cuda-runtime-cu12
-nvidia-cufft-cu12
-nvidia-curand-cu12
-nvidia-cuda-nvrtc-cu12
