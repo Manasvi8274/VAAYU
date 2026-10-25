@@ -203,6 +203,33 @@ def _frequent_replies(n: int = 60) -> list[str]:
     return list(dict.fromkeys(_COMMON_REPLIES + [r for r, _ in counts.most_common(n)]))
 
 
+_SPEAK_LOCK = threading.RLock()
+
+
+def _at_least_volume(level: int):
+    """Speakers up to at least `level`% (an alarm nobody hears is no alarm); returns how to put them back."""
+    try:
+        from assistant.tools import media
+        ep = media._endpoint()
+        before = ep.GetMasterVolumeLevelScalar()
+        muted = ep.GetMute()
+        if muted:
+            ep.SetMute(0, None)
+        if before < level / 100:
+            ep.SetMasterVolumeLevelScalar(level / 100, None)
+
+        def restore():
+            try:
+                ep.SetMasterVolumeLevelScalar(before, None)
+                if muted:
+                    ep.SetMute(1, None)
+            except Exception:
+                pass
+        return restore
+    except Exception:
+        return None
+
+
 def _make_tts(cfg):
     """Kokoro if configured and its files load, else Windows' built-in voice - never no voice."""
     if cfg.engine == "kokoro":
@@ -265,7 +292,11 @@ class Orchestrator:
 
     def _speak(self, text: str) -> bool:
         """Speaks; True if the user cut it off with "stop" (audio/barge_in.py) - Vaayu then
-        just goes back to listening."""
+        just goes back to listening. One voice at a time: alarms speak from their own thread."""
+        with _SPEAK_LOCK:
+            return self._speak_now(text)
+
+    def _speak_now(self, text: str) -> bool:
         stop, barge = threading.Event(), None
         if self.continuous:
             self.listener.mute()
@@ -418,6 +449,13 @@ class Orchestrator:
         print(f"You said: {text}")
         interaction_log.log_event("heard", text=text, state=self.state.value, audio_seconds=audio_seconds,
                                   stt_ms=stt_time.ms, audio_file=_save_audio(audio) if audio is not None else None)
+        from assistant import alarms
+        if alarms.is_ringing() and (alarms.is_ack(text) or alarms.snooze_minutes(text)):  # "I'm awake" - even asleep
+            reply = alarms.dismiss(text)
+            interaction_log.log_event("alarm_answered", text=text, reply=reply)
+            print(f"Vaayu: {reply}")
+            self._speak(reply)
+            return
         command = detect_control_command(text)
         if command is not ControlCommand.NONE:
             interaction_log.log_event("control", command=command.value, text=text, state=self.state.value)
@@ -500,6 +538,8 @@ class Orchestrator:
     def run_forever(self) -> None:
         _media_monitor()  # start watching the sound level before the first command
         threading.Thread(target=self._watch_stop_request, daemon=True, name="stop-request").start()
+        from assistant import alarms
+        alarms.start_scheduler(speak=self._speak, set_volume=_at_least_volume)
         if self.continuous:
             from assistant.audio.name_spotter import NameSpotter
             from assistant.tools import music

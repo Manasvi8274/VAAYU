@@ -241,8 +241,8 @@ _REFUSE = [
      "I can't send emails yet."),
     (re.compile(r"^(?:call|phone|dial|ring|make a (?:phone )?call)\b|\bko (?:call|phone) (?:karo|kar do|lagao)\b", re.I),
      "I can't make phone calls."),
-    (re.compile(r"\b(?:set|create) (?:an? )?(?:alarm|timer|reminder)\b|\balarm (?:laga|set) (?:do|karo)\b", re.I),
-     "I can't set alarms or timers yet - I can save a note instead."),
+    (re.compile(r"\b(?:set|create) (?:an? )?reminder\b", re.I),  # alarms and timers work now (assistant/alarms.py)
+     "I can't set reminders yet - I can set an alarm or a timer, or save a note."),
     (re.compile(r"\b(?:paytm|phonepe|phone pe|gpay|google pay|upi|bhim|send money|transfer money|transfer \d+|"
                 r"pay \d+|pay (?:rs|rupees|money)|make (?:a )?payment|net ?banking|bank account|credit card|debit card)\b"
                 r"|\bpay (?:my |the )?\w* ?bill\b", re.I),
@@ -509,10 +509,45 @@ def _tab_target(q: str, tool: str):
     return ("tool", tool, {"query": q})
 
 
+def _route_alarm(t: str):
+    from assistant import alarms
+    if alarms.is_ringing() and (alarms.is_ack(t) or alarms.snooze_minutes(t)):  # "I'm awake" / "5 more minutes"
+        return ("tool", "stop_alarm", {"said": t})
+    if m := _ALARM_CANCEL.search(t):  # before "set": "cancel the alarm for 7 am" names a time too
+        return ("tool", "cancel_alarm", {"which": (m.group("w") or "all").strip()})
+    if _ALARM_LIST.search(t):
+        return ("tool", "list_alarms", {})
+    if m := _TIMER.search(t):
+        raw, unit = (m.group("n") or m.group("n2")), (m.group("u") or m.group("u2")).lower()
+        n = int(raw) if raw.isdigit() else _NUM_WORDS.get(raw.lower(), 1)
+        return ("tool", "set_timer", {"seconds": n * (3600 if unit.startswith("h") else 60 if unit.startswith("m") else 1)})
+    if m := _ALARM.search(t):
+        return ("tool", "set_alarm", {"time": (m.group("t") or m.group("t2") or m.group("t3")).strip()})
+    if _ALARM_LIST.search(t):
+        return ("tool", "list_alarms", {})
+    if m := _ALARM_CANCEL.search(t):
+        return ("tool", "cancel_alarm", {"which": (m.group("w") or "all").strip()})
+    return None
+
+
+_TIME_SAID = r"\d{1,2}(?:[:.]\d{2})?(?:\s*(?:am|pm|a\.?m\.?|p\.?m\.?|baje|o'?clock))?(?:\s*(?:in the morning|in the evening|at night))?"
+_ALARM = re.compile(rf"\b(?:set|put|keep|create)?(?: me)?(?: an?)? ?alarm(?: to wake me(?: up)?)?(?: for| at)? (?P<t>{_TIME_SAID})\b|"
+                    rf"\bwake me(?: up)?(?: at| by)? (?P<t2>{_TIME_SAID}|half past \d{{1,2}}(?: in the morning)?)\b|"
+                    rf"\b(?P<t3>{_TIME_SAID}) (?:ka|ki|par|pe) alarm (?:laga|set) (?:do|karo|de)\b", re.I)
+_TIMER = re.compile(r"\b(?:set|start|put|keep)?(?: an?| me)? ?timer (?:for |of )?(?P<n>\d+|a|one|two|five|ten|fifteen|twenty|thirty) "
+                    r"(?P<u>seconds?|secs?|minutes?|mins?|hours?)\b|"
+                    r"\b(?P<n2>\d+) (?P<u2>minute|minutes|second|seconds) (?:ka|ki) timer\b", re.I)
+_ALARM_LIST = re.compile(r"\b(?:what|which|show|list|any)(?: are)?(?: my| the)? (?:alarms?|timers?)\b|\bwhen is my alarm\b", re.I)
+_ALARM_CANCEL = re.compile(r"\b(?:cancel|delete|remove|turn off|clear)(?: all)?(?: my| the)? (?:alarms?|timers?)"
+                           r"(?: (?:for|at) (?P<w>[\d:. apm]+))?\b|\balarm (?:hatao|band karo|cancel karo)\b", re.I)
+
+
 def _route_one(t: str):
     """One unambiguous command -> ("tool", name, args) / ("reply", text) / None."""
     if not t:
         return None
+    if routed := _route_alarm(t):
+        return routed
     if _ELSEWHERE.search(t):  # "what is the time in london" - not this laptop's clock
         pass
     elif _DATE_AND_TIME.match(t):

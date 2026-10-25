@@ -288,3 +288,14 @@ def _forget_weather_place():
     # The remembered city must not leak from one test into the next (cheap: one unlink per test).
     from assistant.tools import web_answer
     web_answer.PLACE_FILE.unlink(missing_ok=True)
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _isolated_alarms(tmp_path_factory):
+    # The user's real alarms - and the scheduler must never ring from a test.
+    from assistant import alarms
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(alarms, "PATH", tmp_path_factory.mktemp("alarms") / "alarms.json")
+        mp.setattr(alarms, "_real_start_scheduler", alarms.start_scheduler, raising=False)
+        mp.setattr(alarms, "start_scheduler", lambda speak, set_volume=None: None)
+        yield

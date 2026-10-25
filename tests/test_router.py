@@ -201,7 +201,7 @@ def test_repair_arguments_renames_a_single_misnamed_required_argument():
 
 
 @pytest.mark.parametrize(
-    "text", ["turn on the lights", "switch off the fan", "send an email to my boss", "call mom", "set an alarm for 6 am"])
+    "text", ["turn on the lights", "switch off the fan", "send an email to my boss", "call mom"])  # (alarms work now - test_alarms.py)
 def test_unsupported_capabilities_get_a_plain_cant(text):
     kind, reply = router.fast_route(text)
     assert kind == "reply" and "can't" in reply

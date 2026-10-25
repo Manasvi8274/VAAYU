@@ -438,6 +438,7 @@ _NOW_LOOKED_UP = {
     "who is the prime minister of india": ("answer_question", {"question": "prime minister"}),
     "who is virat kohli": ("answer_question", {"question": "kohli"}),
     "what's the weather tomorrow": ("get_weather", {"day": "tomorrow"}),
+    "set an alarm for 6 am": ("set_alarm", {"time": "6"}),  # alarms are supported now (assistant/alarms.py)
 }
 
 
