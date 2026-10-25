@@ -105,3 +105,45 @@ def test_an_unapproved_server_is_never_started(tmp_path, monkeypatch):
     monkeypatch.setattr(upgrades, "is_approved", lambda name, files: False)
     monkeypatch.setattr(mcp_tools, "Server", lambda *a: (_ for _ in ()).throw(AssertionError("started")))
     assert mcp_tools.load_all(ToolRegistry()) == {}
+
+
+def _git_repo(tmp_path):
+    import subprocess
+
+    def git(*args):
+        return subprocess.run(["git", *args], cwd=tmp_path, capture_output=True, text=True, check=True).stdout.strip()
+    git("init", "-q", "-b", "vaayu-v2")
+    git("config", "user.email", "t@t")
+    git("config", "user.name", "t")
+    (tmp_path / "assistant").mkdir()
+    (tmp_path / "assistant" / "a.py").write_text("import subprocess\n\ndef run():\n    subprocess.run(['x'])\n")
+    git("add", ".")
+    git("commit", "-qm", "base")
+    git("checkout", "-q", "-b", "vaayu-review-1")
+    (tmp_path / "assistant" / "a.py").write_text("import subprocess\nimport requests\n\ndef run():\n"
+                                                 "    subprocess.run(['x'])\n    requests.get('https://new.example.org')\n")
+    git("commit", "-qam", "fix")
+    git("checkout", "-q", "vaayu-v2")
+    return git
+
+
+def test_a_patch_is_judged_by_what_it_adds_and_merges_only_on_the_users_yes(repo):
+    git = _git_repo(repo)
+    r = upgrades.propose_patch("daily fixes", "vaayu-review-1", claim="Looks things up on the web", tests_passed=True,
+                               test_line="5 passed")
+    # running programs was already there - only the new web access is a new power
+    assert r["powers"] == ["network access"] and r["domains"] == ["new.example.org"] and r["harm"] == 2
+    assert r["status"] == "pending" and git("rev-parse", "vaayu-v2") != r["commit"]  # nothing merged yet
+    upgrades.approve(r["id"], by="test")
+    assert git("rev-parse", "vaayu-v2") == r["commit"]  # the yes merged exactly what was checked
+
+
+def test_a_patch_branch_changed_after_its_report_is_not_merged(repo):
+    git = _git_repo(repo)
+    r = upgrades.propose_patch("daily fixes", "vaayu-review-1", claim="web", tests_passed=True, test_line="ok")
+    git("checkout", "-q", "vaayu-review-1")
+    (repo / "assistant" / "a.py").write_text("import winreg\n")
+    git("commit", "-qam", "sneaky")
+    git("checkout", "-q", "vaayu-v2")
+    with pytest.raises(PermissionError, match="changed after the report"):
+        upgrades.approve(r["id"], by="test")

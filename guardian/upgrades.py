@@ -68,12 +68,12 @@ def _decide(event: dict) -> None:
         f.write(json.dumps({"ts": _now(), **event}, ensure_ascii=False) + "\n")
 
 
-def scan(files: list[Path]) -> dict:
-    """What the code can do, from the code itself."""
+def scan(files: list[Path], root: Path | None = None) -> dict:
+    """What the code can do, from the code itself (paths judged relative to root: the repo, or a snapshot)."""
     from guardian.rules import is_payment_target
     powers, domains, critical, notes = set(), set(), [], []
     for f in files:
-        rel = f.relative_to(REPO).as_posix()
+        rel = f.relative_to(root or REPO).as_posix()
         if rel.startswith("guardian/"):
             critical.append(f"changes the Guardian itself ({rel})")
         if f.suffix != ".py":
@@ -166,9 +166,54 @@ def _run_tests(tests: list[str]) -> tuple[bool, str]:
 def propose(kind: str, name: str, files: list[str | Path], claim: str, tests: list[str] | None = None) -> dict:
     """A new upgrade: scanned, tested, tagged for rollback, reported - and left PENDING for the user."""
     paths = [Path(f) if Path(f).is_absolute() else REPO / f for f in files]
-    found = scan(paths)
-    level, reasons = harm_level(found, kind)
     passed, test_line = _run_tests(tests or [])
+    return _file(kind, name, [p.relative_to(REPO).as_posix() for p in paths], claim, scan(paths), passed, test_line,
+                 {"sha256": _sha(paths)})
+
+
+def _git(*args: str) -> subprocess.CompletedProcess:
+    return subprocess.run(["git", *args], cwd=REPO, capture_output=True, timeout=120,
+                          creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+
+
+def _snapshot(ref: str, files: list[str], dest: Path) -> list[Path]:
+    """The files as they are at a git ref, written under dest (a file the ref doesn't have is skipped)."""
+    out = []
+    for rel in files:
+        shown = _git("show", f"{ref}:{rel}")
+        if shown.returncode == 0:
+            (dest / rel).parent.mkdir(parents=True, exist_ok=True)
+            (dest / rel).write_bytes(shown.stdout)
+            out.append(dest / rel)
+    return out
+
+
+def propose_patch(name: str, branch: str, claim: str, tests_passed: bool, test_line: str,
+                  base: str = "vaayu-v2") -> dict:
+    """A code patch to Vaayu (the daily review's fixes, on their own branch): judged by what it ADDS - the
+    powers the changed files have after it and didn't before - and merged only on the user's yes."""
+    import shutil
+    files = _git("diff", "--name-only", f"{base}...{branch}").stdout.decode().split()
+    tmp = DIR / "_scan"
+    shutil.rmtree(tmp, ignore_errors=True)
+    try:
+        before = scan(_snapshot(base, files, tmp / "before"), tmp / "before")
+        after = scan(_snapshot(branch, files, tmp / "after"), tmp / "after")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    found = {"powers": sorted(set(after["powers"]) - set(before["powers"])),
+             "domains": sorted(set(after["domains"]) - set(before["domains"])),
+             "critical": [c for c in after["critical"] if c not in before["critical"] or "the Guardian itself" in c],
+             "notes": [n for n in after["notes"] if n not in before["notes"]],
+             "bandit": [b for b in after["bandit"] if b.split(" (")[0] not in {x.split(" (")[0] for x in before["bandit"]}]}
+    commit = _git("rev-parse", branch).stdout.decode().strip()
+    return _file("patch", name, files, claim, found, tests_passed, test_line,
+                 {"branch": branch, "base": base, "commit": commit, "sha256": ""})
+
+
+def _file(kind: str, name: str, files: list[str], claim: str, found: dict, passed: bool, test_line: str,
+          extra: dict) -> dict:
+    level, reasons = harm_level(found, kind)
     mismatches = [p for p in found["powers"] if p in _CLAIM_WORDS and not re.search(_CLAIM_WORDS[p], claim, re.I)]
     if level == 4 or not passed or any(b.startswith("HIGH") for b in found["bandit"]):
         verdict = "REJECT"
@@ -181,11 +226,10 @@ def propose(kind: str, name: str, files: list[str | Path], claim: str, tests: li
                   default=0)
     tag = f"pre-upgrade-{uid}"
     subprocess.run(["git", "tag", "-f", tag], cwd=REPO, capture_output=True)
-    report = {"id": uid, "name": name, "kind": kind, "status": "pending", "created": _now(),
-              "files": [p.relative_to(REPO).as_posix() for p in paths], "sha256": _sha(paths),
+    report = {"id": uid, "name": name, "kind": kind, "status": "pending", "created": _now(), "files": files,
               "claim": claim, "harm": level, "harm_reasons": reasons, "mismatches": mismatches,
               "tests_passed": passed, "tests": test_line, "rollback": f"git checkout {tag}",
-              "verdict": verdict, **found}
+              "verdict": verdict, **found, **extra}
     folder = DIR / f"{uid}-{re.sub(r'[^a-z0-9]+', '-', name.lower()).strip('-')}"
     folder.mkdir()
     (folder / "report.json").write_text(json.dumps(report, indent=1, ensure_ascii=False), encoding="utf-8")
@@ -206,6 +250,8 @@ def render(r: dict) -> str:
              f"Tests: {'passed' if r['tests_passed'] else 'FAILED'} - {r['tests']}",
              "Code scan (bandit): " + ("; ".join(r["bandit"]) or "no findings")]
     lines += [f"Note: {n}" for n in r["notes"][:10]]
+    if r.get("branch"):
+        lines.append(f"Branch: {r['branch']} at {r['commit'][:10]} - joins {r['base']} only on your yes")
     lines += [f"Rollback: {r['rollback']}", f"Recommendation: {r['verdict']}", f"Status: {r['status']}"]
     return "\n".join(lines) + "\n"
 
@@ -237,6 +283,8 @@ def approve(uid: int, by: str) -> dict:
     r = next(x for x in reports() if x["id"] == uid)
     if r["harm"] == 4:
         raise PermissionError("Harm level 4 is rejected automatically - only you can make such a change, by hand.")
+    if r["kind"] == "patch":
+        return _merge(r, by)
     paths = [REPO / f for f in r["files"]]
     if _sha(paths) != r["sha256"]:
         raise PermissionError("The files changed after the report was made - it needs a new report.")
@@ -247,6 +295,21 @@ def approve(uid: int, by: str) -> dict:
     r["status"] = "approved"
     _save(r)
     _decide({"event": "approved", "id": uid, "name": r["name"], "by": by})
+    return r
+
+
+def _merge(r: dict, by: str) -> dict:
+    """A patch's yes: its branch joins Vaayu - only if it is still exactly the commit the report checked."""
+    if _git("rev-parse", r["branch"]).stdout.decode().strip() != r["commit"]:
+        raise PermissionError(f"Branch {r['branch']} changed after the report was made - it needs a new report.")
+    if _git("branch", "--show-current").stdout.decode().strip() != r["base"]:
+        raise RuntimeError(f"Check out {r['base']} first - the fixes go onto it.")
+    merged = _git("merge", "--ff-only", r["branch"])
+    if merged.returncode != 0:
+        raise RuntimeError(f"Couldn't fast-forward {r['base']}: {merged.stderr.decode().strip()[:200]}")
+    r["status"] = "approved"
+    _save(r)
+    _decide({"event": "approved", "id": r["id"], "name": r["name"], "by": by, "merged": r["commit"]})
     return r
 
 

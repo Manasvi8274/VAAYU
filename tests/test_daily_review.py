@@ -115,8 +115,11 @@ def test_claude_session_discards_a_branch_that_touches_the_guardian(tmp_path, mo
     assert claude_cmd[:2] == ["claude", "-p"] and "Edit(guardian/**)" in claude_cmd
 
 
-def test_claude_session_fast_forwards_only_when_the_tests_pass(tmp_path, monkeypatch):
-    calls = []
+def test_claude_session_never_merges_itself_passing_fixes_wait_for_the_users_yes(tmp_path, monkeypatch):
+    # Build plan: Vaayu may write improvements, never install them - a passing branch becomes a pending
+    # upgrade (the Guardian's report); failing tests propose nothing.
+    from guardian import upgrades
+    calls, proposed = [], []
 
     def fake_git(*args, cwd=None, timeout=120):
         calls.append(args)
@@ -125,12 +128,18 @@ def test_claude_session_fast_forwards_only_when_the_tests_pass(tmp_path, monkeyp
     monkeypatch.setattr(daily_review, "_git", fake_git)
     monkeypatch.setattr(daily_review.shutil, "which", lambda name: "claude")
     monkeypatch.setattr(daily_review, "ROOT", tmp_path / "repo")
-    for test_code, merged in ((1, False), (0, True)):
+    monkeypatch.setattr(upgrades, "propose_patch", lambda name, branch, claim, tests_passed, test_line:
+                        proposed.append(branch) or {"id": 7, "harm": 2})
+    for test_code, proposes in ((1, False), (0, True)):
         calls.clear()
+        proposed.clear()
         results = [subprocess.CompletedProcess([], 0, "ok", ""), subprocess.CompletedProcess([], test_code, "5 passed", "")]
         with patch.object(daily_review.subprocess, "run", side_effect=results):
-            daily_review._real_claude_session(tmp_path / "review", "2026-10-25")
-        assert any(a[0] == "merge" for a in calls) is merged
+            said = daily_review._real_claude_session(tmp_path / "review", "2026-10-25")
+        assert not any(a[0] == "merge" for a in calls)
+        assert bool(proposed) is proposes
+        if proposes:
+            assert "waiting for your yes" in said and "#7" in said
 
 
 def test_names_used_often_are_learned(logs, monkeypatch):

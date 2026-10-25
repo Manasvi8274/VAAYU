@@ -12,12 +12,13 @@ logs should be deleted."
                     keeps using added to the known list (names.py)
     3. Claude     - if the `claude` CLI is installed (the user's Claude Pro
                     login, never API credits): a fix session in a separate git
-                    worktree on branch vaayu-review-YYYYMMDD. Its commits reach
-                    vaayu-v2 only if they don't touch the guardian
-                    (guardian.rules.PROTECTED_PATHS) and the full test suite
-                    passes again here ("fully automatic once the claude access
-                    is given"). Never pushed. Vaayu picks the changes up on its
-                    next restart.
+                    worktree on branch vaayu-review-YYYYMMDD. A branch that
+                    touches the guardian (guardian.rules.PROTECTED_PATHS) is
+                    discarded; one whose full test suite passes here becomes a
+                    pending upgrade with the Guardian's report (build plan:
+                    Vaayu writes improvements, never installs them) and joins
+                    vaayu-v2 only on the user's yes ('Vaayu Upgrades'). Never
+                    pushed. Vaayu picks merged changes up on its next restart.
     4. delete     - the raw logs go only after 1-3 finished. data/reviews/,
                     memory and the watch history are kept; the newest 300 voice
                     clips are kept for voice training. data/guardian.log is the
@@ -268,12 +269,15 @@ def claude_session(review_dir: Path, day: str) -> str:
         tail = (tests.stdout or "").strip().splitlines()[-1:] or ["(no output)"]
         if tests.returncode != 0:
             return f"Kept Claude's fixes on branch {branch} only - the tests failed here: {tail[0]}"
-        if _git("branch", "--show-current").stdout.strip() != "vaayu-v2":
-            return f"Claude's fixes pass the tests ({tail[0]}) - left on {branch}: vaayu-v2 isn't checked out."
-        merged = _git("merge", "--ff-only", branch)
-        if merged.returncode != 0:
-            return f"Claude's fixes pass ({tail[0]}) but couldn't fast-forward vaayu-v2: {merged.stderr.strip()[:200]}"
-        return f"Applied {commits} commit(s) from Claude to vaayu-v2 ({tail[0]}); Vaayu uses them after its next restart."
+        # Build plan: Vaayu may write his own improvements but never install them - the Guardian reports on
+        # the branch and only the user's yes ('Vaayu Upgrades' on the desktop) merges it.
+        from guardian import upgrades
+        summary = review_dir / "claude_summary.md"
+        claim = (summary.read_text(encoding="utf-8", errors="replace")[:600] if summary.exists()
+                 else f"{commits} fix commit(s) from the daily review")
+        report = upgrades.propose_patch(f"daily fixes {day}", branch, claim, tests_passed=True, test_line=tail[0])
+        return (f"Claude's {commits} fix commit(s) pass the tests ({tail[0]}) - waiting for your yes: upgrade "
+                f"#{report['id']} (harm {report['harm']}) in 'Vaayu Upgrades' on your desktop.")
     finally:
         _git("worktree", "remove", "--force", str(tree))
         if commits == "0":  # nothing worth keeping (or guardian changes): no leftover branch
