@@ -2,11 +2,16 @@
 Answers from the internet without opening a browser: weather (Open-Meteo)
 and general questions (DuckDuckGo). Both free, no account or API key.
 
-Offline, both fail with a plain "couldn't reach the internet" instead of
-guessing - the assistant only knows what it looked up.
+A question asked again within 12 hours is answered instantly from the
+answer cache (knowledge.py, "answers"). Offline, a question is answered from
+what Vaayu read earlier (his research notes and past answers) when there's
+something close enough, saying when he read it; otherwise a plain "couldn't
+reach the internet" instead of guessing. Weather is never cached.
 """
 
+import json
 import re
+from datetime import datetime
 
 import httpx
 
@@ -14,6 +19,9 @@ from assistant.tools.registry import registry
 
 _TIMEOUT = 6  # seconds per request - a spoken answer can't wait longer
 _OFFLINE = "I couldn't reach the internet to look that up."
+_CACHE_SAME = 0.93  # calibration knob: this similar a question = the same question
+_CACHE_HOURS = 12  # facts like "who is the PM" are re-checked after this
+_OFFLINE_CLOSE = 0.75  # offline: how close something read earlier must be to answer from it
 
 # WMO weather codes (Open-Meteo's weather_code) -> spoken words.
 _WMO = {0: "clear", 1: "mostly clear", 2: "partly cloudy", 3: "cloudy", 45: "foggy", 48: "foggy",
@@ -120,7 +128,19 @@ def get_weather(place: str = "", day: str = "today") -> str:
         "required": ["question"],
     },
 )
-def answer_question(question: str) -> dict:
+def answer_question(question: str) -> dict | str:
+    _log_asked(question)
+    if cached := _cached_answer(question):
+        return cached  # a str is spoken as-is (router.format_result) - no search, no LLM call
+    try:
+        return _look_up(question)
+    except ConnectionError:
+        if remembered := _from_memory(question):
+            return remembered
+        raise
+
+
+def _look_up(question: str) -> dict:
     from concurrent.futures import ThreadPoolExecutor
     with ThreadPoolExecutor(2) as pool:  # both at once: the search alone takes 3-5 s
         # DuckDuckGo's instant answer: a one-line fact when it has one (often empty)
@@ -142,3 +162,58 @@ def answer_question(question: str) -> dict:
     # The abstract is a Wikipedia definition - live, "who is the prime minister of india" got "The prime
     # minister of India is the head of government..." and the reply never named anyone. Results first.
     return {"question": question, "results": results, "instant_answer": answer or ("" if results else abstract)}
+
+
+# --- answer cache, offline answers, what was asked (research.py reads it) -------------------------
+
+def _knowledge():
+    from assistant import knowledge
+    return knowledge
+
+
+def _cached_answer(question: str) -> str | None:
+    try:
+        for score, row in _knowledge().search("answers", question, k=1, min_score=_CACHE_SAME):
+            if _knowledge().age_hours(row) <= _CACHE_HOURS and row.get("meta", {}).get("answer"):
+                return row["meta"]["answer"]
+    except Exception:  # embedding model unavailable - just look it up
+        pass
+    return None
+
+
+def remember_answer(question: str, answer: str) -> None:
+    """Called after the spoken answer is phrased: the next time, it's instant."""
+    if not answer or answer.startswith(("Sorry", "That didn't work")):
+        return
+    try:
+        _knowledge().add("answers", question, {"answer": answer}, dedupe=_CACHE_SAME)
+    except Exception:
+        pass
+
+
+def _from_memory(question: str) -> str | None:
+    try:
+        best = None
+        for kind in ("notes", "answers"):
+            for score, row in _knowledge().search(kind, question, k=1, min_score=_OFFLINE_CLOSE):
+                if best is None or score > best[0]:
+                    best = (score, kind, row)
+    except Exception:
+        return None
+    if best is None:
+        return None
+    _score, kind, row = best
+    text = row["meta"].get("answer") if kind == "answers" else row["text"]
+    when = datetime.fromisoformat(row["ts"]).strftime("%d %B").lstrip("0")
+    return f"I'm offline, but from what I read on {when}: {text}"
+
+
+def _log_asked(question: str) -> None:
+    from assistant import knowledge
+    try:
+        knowledge.DIR.mkdir(parents=True, exist_ok=True)
+        with open(knowledge.DIR / "asked.jsonl", "a", encoding="utf-8") as f:
+            f.write(json.dumps({"ts": datetime.now().isoformat(timespec="seconds"), "q": question},
+                               ensure_ascii=False) + "\n")
+    except OSError:
+        pass

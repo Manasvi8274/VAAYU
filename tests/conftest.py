@@ -210,3 +210,29 @@ def _no_real_kokoro():
         mp.setattr(orchestrator, "_real_make_tts", orchestrator._make_tts, raising=False)
         mp.setattr(orchestrator, "_make_tts", lambda cfg: Pyttsx3Engine(rate=cfg.rate))
         yield
+
+
+def fake_embed(texts):
+    """Bag-of-words hashing, 384 dims like the real model: same words -> same vector, no download."""
+    import re
+    import zlib
+    import numpy as np
+    out = np.zeros((len(texts), 384), np.float32)
+    for i, text in enumerate(texts):
+        for word in re.findall(r"[a-z0-9]+", text.lower()):
+            out[i, zlib.crc32(word.encode()) % 384] += 1.0
+    return out / np.maximum(np.linalg.norm(out, axis=1, keepdims=True), 1e-9)
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _isolated_knowledge(tmp_path_factory):
+    # Vaayu's knowledge (facts about the user, research notes, answer cache) is real user data,
+    # and the real embedding model is a 130 MB download - tests use a temp dir and a fake embedder,
+    # and the idle-time research thread never runs.
+    from assistant import knowledge, research
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(knowledge, "DIR", tmp_path_factory.mktemp("knowledge"))
+        mp.setattr(knowledge, "_embed", fake_embed)
+        mp.setattr(research, "_real_start", research.start, raising=False)
+        mp.setattr(research, "start", lambda config, client: None)
+        yield

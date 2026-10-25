@@ -66,3 +66,6 @@ indic-transliteration
 kokoro-onnx
 # Songs through the speakers without a browser (assistant/tools/music.py); decoding uses PyAV, already here
 yt-dlp
+# Memory + knowledge search by meaning (assistant/knowledge.py): BAAI/bge-small-en-v1.5 on the CPU,
+# ~130 MB, downloaded once into models/fastembed; ~180 MB RAM, ~15-30 ms per search
+fastembed

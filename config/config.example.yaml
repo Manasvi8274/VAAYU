@@ -36,3 +36,9 @@ files:
 
 logging:
   level: "INFO"
+
+research:                 # learning about the world while idle (assistant/research.py)
+  enabled: true
+  per_hour: 6             # topics read about per hour, at most
+  per_day: 40
+  idle_minutes: 10        # only when nobody has spoken for this long and nothing is playing
