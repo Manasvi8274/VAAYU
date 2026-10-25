@@ -136,11 +136,13 @@ _TOOL_TOPIC = re.compile(r"\b(?:battery|charg\w*|wi-?fi|internet|bluetooth|awaa?
 _PERSONAL = re.compile(r"\b(?:i|i'm|im|i've|i'd|my|me|myself|mujhe|mujhko|mera|meri|mere|main|mai|hum|life|feel|"
                        r"feeling|bhai|tum|tu|aap|you think|advice|opinion)\b", re.I)
 _DEVANAGARI = re.compile(r"[ऀ-ॿ]")
-# Few-shot turns: told only in words, the 3B model answered Hinglish in Devanagari.
+# Few-shot turns: told only in words, the 3B model answered Hinglish in Devanagari. Its Roman
+# Hinglish was tested too (and after training on Claude-written Hinglish): fluent-sounding but
+# meaningless, so Hinglish is understood and answered in plain English (prompts.BROTHER_PROMPT).
 _CHAT_EXAMPLES = [
     {"role": "user", "content": "bhai aaj padhai ka bilkul mann nahi hai"},
-    {"role": "assistant", "content": "Hota hai bhai, har din josh nahi rehta. Bas 25 minute ka timer laga aur ek chhota "
-                                     "topic utha - shuru karna hi sabse mushkil hai, baaki apne aap chalega."},
+    {"role": "assistant", "content": "Bhai, that happens to everyone. Set a 25 minute timer and start with one small "
+                                     "topic - starting is the hardest part, the rest follows."},
     {"role": "user", "content": "I keep putting off my workouts"},
     {"role": "assistant", "content": "Then make it too small to skip - ten minutes, same time every day. Once it's a "
                                      "habit you can make it longer. Consistency beats intensity."},
