@@ -78,8 +78,10 @@ _MEDIA = [
 ]
 _MEDIA = [(re.compile(rf"^(?:{p})$", re.I), a) for p, a in _MEDIA]
 # "Volume" is the laptop's speakers (user, 2026-10-25); only a volume that names the song/music is the player's.
-_SONG_VOLUME = re.compile(r"\b(?:song|music|gaana|gaane|gaane ki|track)(?:'s)? (?:volume|awaa?z|sound)\b|"
+_SONG_VOLUME = re.compile(r"(?<!not )(?<!not the )\b(?:song|music|gaana|gaane|gaane ki|track)(?:'s)? (?:volume|awaa?z|sound)\b|"
                           r"\bvolume of (?:the |this )?(?:song|music|track)\b", re.I)
+# Real log: "Lower down the system volume to 50 percent laptop volume not the song volume" - the speakers win.
+_SPEAKER_WORDS = re.compile(r"\b(?:system|laptop|laptop's|speaker|speakers|computer|pc)\b", re.I)
 _SONG_VOLUME_STEP = re.compile(
     r"^(?:(?:turn|make|put) )?(?:the )?(?:song|music|gaana|gaane ki|track)(?:'s)? (?:volume|awaa?z|sound) "
     r"(?:(?P<up>up|badhao|badha do|increase|louder|tez karo)|(?:down|kam karo|kam kar do|decrease|lower|quieter|dheere karo))$|"
@@ -537,14 +539,14 @@ def _route_one(t: str):
     for pattern, build in _YT_RULES:
         if m := pattern.match(t):
             return build(m)
-    if (_VOLUME_WORD.search(t) and len(t.split()) <= 12 and len(nums := _VOLUME_NUMBER.findall(t)) == 1
+    if (_VOLUME_WORD.search(t) and len(t.split()) <= 18 and len(nums := _VOLUME_NUMBER.findall(t)) == 1
             and not re.search(r"\b(?:seconds?|minutes?)\b", t, re.I)):
         level = min(int(nums[0]), 100)
         if re.search(r"\byoutube\b", t, re.I):  # named YouTube: YouTube, even while it's paused (found live)
             return _yt("volume_set", level)
         if re.search(r"\bvideo\b", t, re.I):  # the player's own volume on any site (YouTube handled inside)
             return ("tool", "set_video_volume", {"level": level})
-        if _SONG_VOLUME.search(t):  # "song volume 30" - Vaayu's own player; plain "volume" = the speakers
+        if _SONG_VOLUME.search(t) and not _SPEAKER_WORDS.search(t):  # "song volume 30"; plain "volume" = speakers
             return ("tool", "music_control", {"action": "volume_set", "level": level})
         return ("tool", "control_media", {"action": "volume_set", "level": level})
     # "Reduce it to 20 percent" (real log) - a volume change with no "volume" word in it.

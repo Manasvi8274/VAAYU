@@ -195,3 +195,15 @@ def test_a_song_the_user_paused_stays_paused_after_vaayu_talks(playing, monkeypa
     music.release_after_conversation()
     time.sleep(0.6)
     assert playing.paused.is_set()
+
+
+@pytest.mark.parametrize("text, want", [
+    ("Lower down the system volume to 50 percent laptop volume not the song volume.",  # real log
+     ("control_media", {"action": "volume_set", "level": 50})),
+    ("lower the laptop volume", ("control_media", {"action": "volume_down"})),
+    ("reduce the volume to 20 percent", ("control_media", {"action": "volume_set", "level": 20})),
+    ("song volume 30", ("music_control", {"action": "volume_set", "level": 30})),
+    ("gaane ki awaz kam karo", ("music_control", {"action": "volume_down"})),
+])
+def test_volume_means_the_speakers_unless_the_song_is_named(text, want):
+    assert router.fast_route(text) == ("tools", [want])
