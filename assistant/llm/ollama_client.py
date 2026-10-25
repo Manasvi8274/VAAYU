@@ -12,6 +12,7 @@ read_page/click_on_page made multi-step web tasks a real, common case.
 """
 
 import re
+from datetime import datetime
 from typing import Callable
 
 import ollama
@@ -188,6 +189,25 @@ def cli_confirm(name: str, arguments: dict) -> bool:
     return answer.strip().lower() in ("y", "yes")
 
 
+_PLACEHOLDER_RE = re.compile(r"\[(?:current|today|insert|your|date|time|day|name|location|city)[^\]]{0,30}\]", re.I)
+
+
+def _now_line() -> str:
+    """The real date and time for every model call. Real log: with no clock, the chat model said
+    "today is Monday" on a Sunday, then flip-flopped, then answered "The current time is [current time]"."""
+    now = datetime.now()
+    return (f"\nRight now it is {now.strftime('%A')}, {now.day} {now.strftime('%B %Y')}, "
+            f"{now.strftime('%I:%M %p').lstrip('0')} on this laptop's clock (India). Use exactly this for any "
+            "question about today's date, day or time - never guess it.")
+
+
+def _with_now(messages: list[dict]) -> list[dict]:
+    """messages with the clock added to the system prompt, for this call only (history stays clean)."""
+    if messages and messages[0].get("role") == "system":
+        return [{**messages[0], "content": messages[0]["content"] + _now_line()}] + messages[1:]
+    return [{"role": "system", "content": _now_line().strip()}] + messages
+
+
 def _sanitize_reply(text: str, max_sentences: int = 2) -> str:
     """This assistant only acts through real registered tools - it must never
     present code (or a hallucinated fake tool call) as if it were executing
@@ -210,6 +230,8 @@ def _sanitize_reply(text: str, max_sentences: int = 2) -> str:
     # Real log: replies read the system prompt back ("use either close_app or
     # open_app - neither is about closing the browser itself") and ran 15-20 s
     # of speech. A snake_case tool name is never meant for the user's ears.
+    if _PLACEHOLDER_RE.search(cleaned):  # "The current time is [current time]" - a template, not an answer
+        return _DIDNT_GET_IT
     if _TOOL_NAME_RE.search(cleaned):
         return _DIDNT_GET_IT
     sentences = re.split(r"(?<=[.!?])\s+", cleaned)
@@ -251,7 +273,7 @@ class OllamaBrain:
                 {"role": "system", "content": "Answer the user's question in one or two short spoken sentences "
                                               "using only this tool result - state the answer directly. No markdown. "
                                               "Reply in the same language as the question: English, or Hinglish "
-                                              "written in Roman letters."},
+                                              "written in Roman letters." + _now_line()},
                 {"role": "user", "content": f"Question: {user_text}\nResult of {name}: {result}"},
             ],
             keep_alive=_KEEP_ALIVE,
@@ -276,7 +298,7 @@ class OllamaBrain:
             removed = memory.forget(m.group("a") or m.group("a2"))
             reply = "Done, I've forgotten that." if removed else "I didn't have anything saved about that."
             return reply, messages + [{"role": "assistant", "content": reply}]
-        system = BROTHER_PROMPT
+        system = BROTHER_PROMPT + _now_line()
         if known := memory.facts(_CHAT_FACTS):
             system += "\nWhat you remember about them:\n" + "\n".join(f"- {f}" for f in known)
         try:
@@ -392,7 +414,7 @@ class OllamaBrain:
             self.trace.append({"path": "llm_call", "tools_offered": list(tool_registry._tools)})
             response = self.client.chat(
                 model=self.model,
-                messages=messages,
+                messages=_with_now(messages),
                 tools=tool_registry.get_ollama_tools(),
                 keep_alive=_KEEP_ALIVE,
                 think=_THINK,
@@ -483,7 +505,7 @@ class OllamaBrain:
         self.trace.append({"path": "llm_call", "purpose": "forced_summary"})
         final_response = self.client.chat(
             model=self.model,
-            messages=messages,
+            messages=_with_now(messages),
             keep_alive=_KEEP_ALIVE,
             think=_THINK,
             options={"num_ctx": _NUM_CTX, "num_predict": _MAX_REPLY_TOKENS, "temperature": _TOOL_TEMPERATURE},

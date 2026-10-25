@@ -265,7 +265,8 @@ _NOT_WEB = re.compile(r"\b(?:i|i'm|im|me|my|mine|myself|we|our|you|your|yours|yo
                       r"notes?|downloads|desktop|laptop|computer|pc|system|wi-?fi|bluetooth|battery|charge|cpu|ram|disk|"
                       r"storage|volume|mic|microphone|speakers?|usb|displays?|monitors?|printers?|video|song|music|time|"
                       r"vaayu|vayu)\b", re.I)
-_WEB_OK = re.compile(r"^tell me about |\b(?:this|next|last) (?:year|month|week|weekend|season|summer|winter)\b", re.I)
+_WEB_OK = re.compile(r"^tell me about |\b(?:this|next|last) (?:year|month|week|weekend|season|summer|winter)\b|"
+                     r"\b(?:time|date|day) (?:is it )?(?:in|at) (?!india\b)", re.I)  # "time in london": look it up
 _MATH = re.compile(r"\d\s*(?:times|plus|minus|into|divided by|multiplied by|x|\*|\+|-|/)\s*\d", re.I)
 
 _SCREENSHOT = re.compile(r"^(?:take|capture|grab|le lo|lo)?\s*(?:a )?(?:quick )?(?:screen ?shot|screen capture|ss)(?: (?:lo|le lo|lelo|karo))?$|"
@@ -273,10 +274,35 @@ _SCREENSHOT = re.compile(r"^(?:take|capture|grab|le lo|lo)?\s*(?:a )?(?:quick )?
 _LOCK = re.compile(r"^lock(?: (?:my|the))? (?:computer|laptop|pc|screen|system)$|^(?:laptop|computer|pc|screen) lock (?:karo|kar do)$|"
                    r"^lock (?:karo|kar do|it|it up)$", re.I)
 _MINIMIZE = re.compile(r"^minimi[sz]e(?: (?:this|it|this window|the window|current window))?$|^(?:ye|isko|this) minimi[sz]e (?:karo|kar do)$", re.I)
-_TIME = re.compile(r"^(?:what(?:'s| is) the time|what time is it|time kya hai|kitne baje hai[n]?|time batao|kya time hai|"
-                   r"tell me the time)(?: now)?$", re.I)
-_DATE = re.compile(r"^(?:what(?:'s| is) (?:the )?(?:date|day)(?: today)?|aaj (?:kya date hai|kaunsa din hai)|"
-                   r"what day is it(?: today)?|today's date)$", re.I)
+# Date/time come from the clock, never the model: real log - "what is date today monday tuesday..." went
+# to the chat model, which said Monday on a Sunday, flip-flopped, and once answered "[current time]".
+_TIME = re.compile(r"^(?:what(?:'s| is)(?: the)?(?: current| exact)? time(?: now| right now| currently| it is| is it)?|"
+                   r"what time is it(?: now| right now)?|(?:the )?current time|time now|"
+                   r"(?:tell me|say)(?: the)?(?: current)? time|time (?:kya hai|kya hua|batao|please|bata do)|"
+                   r"kitne baje(?: hai[n]?| hue| hain)?|kya time (?:hai|hua)|abhi kya time hai|samay kya hai|"
+                   r"(?:can you )?(?:check|tell me) (?:the )?time)(?: now| please)?$", re.I)
+_DATE = re.compile(r"^(?:what(?:'s| is)(?: the)? (?:date|day)(?: (?:today|to ?day|of today|is it|is it today))?|"
+                   r"what(?:'s| is) today(?:'s date| date| day)?|what(?:'s| is) (?:the )?today'?s date|"
+                   r"(?:what|which) day (?:is (?:it|today)|it is)(?: today)?|what is date today|"
+                   r"(?:today'?s|today) date|date today|day today|(?:tell me )?(?:the )?date(?: please| today)?|"
+                   r"aaj (?:kya|kaunsa|kaun sa|konsa) (?:date|din|tareekh|tarikh) hai|aaj ki (?:date|tareekh|tarikh)(?: kya hai)?|"
+                   r"aaj (?:kya )?din hai|kaun ?sa din hai(?: aaj)?|date (?:kya hai|batao))$", re.I)
+_DATE_AND_TIME = re.compile(r"^(?:what(?:'s| is) )?(?:the )?(?:date and time|time and date|day and time)(?: now| today)?$", re.I)
+# The question buried in a longer sentence (real log: "I mean what is date today monday tuesday wednesday
+# what is that date today").
+_DATE_IN = re.compile(r"\b(?:what(?:'s| is)(?: the| that)? (?:date|day) (?:today|to ?day)|(?:what|which) day is (?:it )?today|"
+                      r"today'?s date|aaj (?:kya|kaunsa|kaun sa) (?:date|din) hai)\b", re.I)
+_ELSEWHERE = re.compile(r"\b(?:time|date|day)\b.*\b(?:in|at)\s+(?!india\b|my\b|this\b|the morning\b)[a-z]", re.I)
+_TIME_IN = re.compile(r"\b(?:what(?:'s| is) the (?:current )?time|what time is it)\b", re.I)
+
+
+def _now_reply(date: bool, time: bool) -> str:
+    now = datetime.datetime.now()
+    clock = now.strftime("%I:%M %p").lstrip("0")
+    day = now.strftime("%A, %d %B %Y").replace(" 0", " ")
+    if date and time:
+        return f"It's {clock} on {day}."
+    return f"It's {clock}." if time else f"Today is {day}."
 
 # In-page video control (any site). Only wording that clearly says video/site.
 # Includes Whisper mishearings seen in data/interactions.jsonl: "pause the
@@ -466,10 +492,16 @@ def _route_one(t: str):
     """One unambiguous command -> ("tool", name, args) / ("reply", text) / None."""
     if not t:
         return None
-    if _TIME.match(t):
-        return ("reply", datetime.datetime.now().strftime("It's %I:%M %p.").replace(" 0", " "))
-    if _DATE.match(t):
-        return ("reply", datetime.datetime.now().strftime("Today is %A, %d %B %Y."))
+    if _ELSEWHERE.search(t):  # "what is the time in london" - not this laptop's clock
+        pass
+    elif _DATE_AND_TIME.match(t):
+        return ("reply", _now_reply(date=True, time=True))
+    elif _TIME.match(t):
+        return ("reply", _now_reply(date=False, time=True))
+    elif _DATE.match(t):
+        return ("reply", _now_reply(date=True, time=False))
+    elif len(t.split()) <= 20 and not _ACTION_START.match(t) and (_DATE_IN.search(t) or _TIME_IN.search(t)):
+        return ("reply", _now_reply(date=bool(_DATE_IN.search(t)), time=bool(_TIME_IN.search(t))))
     for pattern, reply in _SMALL_TALK:
         if pattern.match(t):
             return ("reply", reply)

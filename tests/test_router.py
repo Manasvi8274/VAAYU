@@ -266,3 +266,33 @@ def test_morning_log_phrasings(text, want):
 def test_stray_you_is_only_dropped_before_a_command():
     assert router.fast_route("you are awesome") is None
     assert router.fast_route("are you there")[0] == "reply"
+
+
+@pytest.mark.parametrize("text, kind", [
+    ("What is the day to day.", "date"),  # real log: "day today", misheard - went to a web search
+    ("I mean what is date today monday tuesday wednesday what is that date today.", "date"),  # real log: chat said Monday
+    ("What is the current time.", "time"),  # real log: chat answered "[current time]"
+    ("aaj kaunsa din hai", "date"), ("aaj ki date kya hai", "date"), ("kitne baje hain", "time"),
+    ("which day is it today", "date"), ("date and time", "both"),
+])
+def test_date_and_time_come_from_the_clock(text, kind):
+    import datetime
+    routed = router.fast_route(text)
+    assert routed[0] == "reply"
+    now = datetime.datetime.now()
+    if kind in ("date", "both"):
+        assert now.strftime("%A") in routed[1]
+    if kind in ("time", "both"):
+        assert now.strftime("%I").lstrip("0") in routed[1]
+
+
+def test_time_somewhere_else_is_looked_up_not_read_off_this_clock():
+    assert router.fast_route("what is the time in london")[1][0][0] == "answer_question"
+
+
+def test_every_model_call_gets_the_real_clock():
+    import datetime
+    from assistant.llm.ollama_client import _sanitize_reply, _with_now
+    out = _with_now([{"role": "system", "content": "base"}, {"role": "user", "content": "hi"}])
+    assert out[0]["content"].startswith("base") and datetime.datetime.now().strftime("%A") in out[0]["content"]
+    assert "The current time is" not in _sanitize_reply("The current time is [current time].")
