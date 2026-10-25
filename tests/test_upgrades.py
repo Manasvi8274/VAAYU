@@ -171,3 +171,15 @@ def test_a_server_vaayu_built_loads_once_its_patch_is_approved(repo):
     assert not upgrades.is_approved("pdf-reader", ["mcp_servers/pdf_reader.py"])
     upgrades.approve(r["id"], by="test")
     assert upgrades.is_approved("pdf-reader", ["mcp_servers/pdf_reader.py"])
+
+
+@pytest.mark.parametrize("code, critical", [
+    ("cookies = response.cookies\n", False),          # an ordinary web client (found: DuckDuckGo was rejected)
+    ("HEADERS = {'Cookie': 'a=b'}\n", False),
+    ("P = r'C:\\Users\\x\\AppData\\Local\\Google\\Chrome\\User Data\\Default\\Network\\Cookies'\n", True),
+    ("P = 'Login Data'\n", True),                     # saved passwords
+    ("subprocess.run(['schtasks', '/create'])\n", True),
+])
+def test_the_scanner_flags_password_and_cookie_files_not_the_word_cookies(repo, code, critical):
+    f = _write(repo, "x.py", code)
+    assert bool(upgrades.scan([upgrades.REPO / f])["critical"]) is critical

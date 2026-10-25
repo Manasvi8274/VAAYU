@@ -6,3 +6,5 @@ data/
 config/config.yaml
 *.log
 .cache/
+designs/
+mcp_servers/vendor/

@@ -33,17 +33,32 @@ _SAFE = {
     "set_video_volume", "switch_to_browser_tab", "switch_to_window", "restore_window", "minimize_window",
     "set_alarm", "set_timer", "cancel_alarm", "stop_alarm", "set_voice", "remember_name", "move_status_orb",
     "review_logs", "set_daily_update_time", "app_controls", "app_read", "focus_input_field",
+    # MCP servers' read-only tools (mcp_servers/servers.json)
+    "sequentialthinking", "list_allowed_directories", "read_text_file", "read_media_file", "read_multiple_files",
+    "list_directory", "list_directory_with_sizes", "directory_tree", "get_file_info", "browser_snapshot",
+    "browser_navigate", "browser_tabs", "browser_take_screenshot", "browser_close", "browser_wait_for", "fetch",
+    "search", "fetch_content", "search_wikipedia", "get_article", "get_summary", "get_related_topics",
+    "get_sections", "get_links", "get_coordinates", "get_current_time", "convert_time", "calculate", "git_status",
+    "git_log", "git_diff", "git_diff_staged", "git_diff_unstaged", "git_show", "git_branch", "get_document_text",
+    "get_document_info", "read_data_from_excel", "list_presentations", "list_designs", "show_plan", "list_plans",
+    "list_tasks", "think_deeply", "get_new_ability",
 }
-_OUTWARD = {"send_whatsapp_message", "type_sensitive_field"}
-# Tools whose risk is in WHAT they click: "click Send" is outward, "click Pay" is blocked.
-_CLICKS = {"click_on_page", "app_click", "app_menu"}
+_OUTWARD = {"send_whatsapp_message", "type_sensitive_field", "browser_file_upload"}
+# Tools whose risk is in WHAT they click: "click Send" is outward, "click Pay" is blocked - and which of their
+# arguments name that thing (what is TYPED is not judged: "I want to buy..." typed in a box is just text).
+_CLICK_KEYS = {"click_on_page": ("description",), "app_click": ("target",), "app_menu": ("path",),
+               "browser_click": ("element",), "browser_select_option": ("element",), "browser_type": ("element",),
+               "browser_fill_form": ("fields",), "browser_press_key": ("key",)}
+_CLICKS = set(_CLICK_KEYS)
 _OUTWARD_WORDS = re.compile(r"\b(?:send|post|submit|publish|reply|share|tweet|email|e-mail|upload|forward|"
                             r"bhejo|bhej do|book|confirm order)\b", re.I)
 _DANGEROUS_WORDS = re.compile(r"\b(?:pay|payment|buy|purchase|checkout|check out|place order|add money|transfer|"
                               r"delete|remove|uninstall|install|format|erase|wipe|factory reset|"
                               r"empty recycle bin|sign out of all)\b", re.I)
 # Tools that bring outside text into the turn - an outward action right after one is refused.
-CONTENT_TOOLS = {"read_page", "read_file", "answer_question", "app_read", "search_files", "get_weather"}
+CONTENT_TOOLS = {"read_page", "read_file", "answer_question", "app_read", "search_files", "get_weather",
+                 "fetch", "fetch_content", "search", "browser_snapshot", "browser_navigate", "read_text_file",
+                 "read_multiple_files", "get_article", "get_summary", "get_document_text", "read_data_from_excel"}
 
 _PER_MINUTE = {CHANGE: 30, OUTWARD: 3}  # calibration knobs
 _recent: dict[int, deque] = {CHANGE: deque(), OUTWARD: deque()}
@@ -51,8 +66,14 @@ _recent: dict[int, deque] = {CHANGE: deque(), OUTWARD: deque()}
 
 def tier(name: str, args: dict | None = None) -> int:
     args = args or {}
+    from guardian.rules import is_payment_target
+    # a payment site/app as WHERE to go or WHAT to act on, by any tool (a browser told to go to paytm.com) - not
+    # what something is about ("a presentation on UPI payments" is fine)
+    if any(isinstance(v, str) and is_payment_target(v) for k, v in args.items()
+           if k in ("url", "url_or_query", "app", "app_name", "target", "element")):
+        return DANGEROUS
     if name in _CLICKS:
-        what = " ".join(str(v) for k, v in args.items() if k in ("target", "path", "description", "text", "label"))
+        what = " ".join(str(v) for k, v in args.items() if k in _CLICK_KEYS[name] + ("label",))
         # ponytail: buttons are short ("Pay now", "Delete", "Place order"); a long description is a link or
         # a video ("the one about how to install python") - judged by its words only when it's button-sized
         if len(re.split(r"\s+|>", what.strip())) > 5:

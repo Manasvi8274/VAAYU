@@ -36,9 +36,12 @@ _NETWORK = {"socket", "requests", "httpx", "urllib", "aiohttp", "websockets", "h
 _CONTROL = {"keyboard", "pyautogui", "pynput", "uiautomation", "pywinauto", "mouse"}
 _RUNS = {"subprocess", "os.system", "os.startfile", "os.popen", "os.execv", "os.spawnv", "Popen"}
 _DELETES = {"os.remove", "os.unlink", "unlink", "rmtree", "os.rmdir", "rmdir"}
-_CRITICAL_TEXT = re.compile(r"Login Data|Cookies|Local State|CurrentVersion\\\\?Run|Start Menu\\\\?Programs\\\\?Startup|"
-                            r"runas|UAC|DisableAntiSpyware|Set-MpPreference|netsh|bcdedit|schtasks|"
-                            r"reg add|vssadmin", re.I)
+# A browser's saved passwords/cookies FILES (not the word "cookies" - every web client handles cookies; found:
+# the DuckDuckGo server was rejected for it), autostart, Windows' security and boot settings.
+_CRITICAL_TEXT = re.compile(r"\bLogin Data\b|\bLocal State\b|User Data[\\/]+[^'\"\n]{0,40}?[\\/]+(?:Network[\\/]+)?Cookies\b|"
+                            r"cookies\.sqlite|logins\.json|key4\.db|CurrentVersion\\\\?Run\b|"
+                            r"Start Menu\\\\?Programs\\\\?Startup|\brunas\b|\bDisableAntiSpyware\b|\bSet-MpPreference\b|"
+                            r"\bnetsh\b|\bbcdedit\b|\bschtasks\b|\breg add\b|\bvssadmin\b", re.I)
 # What a claim must mention for a power it really has - else the report shows a mismatch.
 _CLAIM_WORDS = {
     "network access": r"internet|web|online|network|download|api|http|search|fetch|url",

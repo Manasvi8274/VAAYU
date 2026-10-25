@@ -140,3 +140,22 @@ def test_the_fast_rules_decide_in_milliseconds():
         router.fast_route(p)
     per = (time.perf_counter() - t) / len(phrases)
     assert per < 0.02, f"{per * 1000:.1f} ms per command"  # leaves the 2 s for hearing and speaking
+
+
+@pytest.mark.parametrize("tool, args, want", [
+    ("browser_navigate", {"url": "https://paytm.com"}, rules.DANGEROUS),       # a browser can't go pay either
+    ("browser_click", {"element": "Buy now button", "ref": "e5"}, rules.DANGEROUS),
+    ("browser_click", {"element": "Send button", "ref": "e9"}, rules.OUTWARD),
+    ("browser_file_upload", {"paths": ["C:/Users/x/Documents/cv.pdf"]}, rules.OUTWARD),
+    ("browser_type", {"element": "search box", "text": "how to buy a car"}, rules.CHANGE),  # typed text isn't a button
+    ("design_presentation", {"description": "UPI payments for beginners"}, rules.CHANGE),   # about payments is fine
+    ("fetch", {"url": "https://example.com"}, rules.SAFE),
+])
+def test_mcp_tools_are_tiered_by_what_they_do(tool, args, want):
+    assert rules.tier(tool, args) == want
+
+
+def test_a_page_read_by_an_mcp_tool_cannot_make_vaayu_upload_or_send():
+    for reader in ("fetch", "browser_snapshot", "get_article", "read_text_file"):
+        assert reader in rules.CONTENT_TOOLS
+    assert "what I just read" in rules.refusal("browser_file_upload", {"paths": ["x"]}, after_content=True)

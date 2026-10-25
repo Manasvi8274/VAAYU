@@ -78,9 +78,14 @@ def find_free(need: str) -> list[dict]:
     return sorted((c for c in out if c["score"] >= need_score), key=lambda c: -c["score"])
 
 
-def _entry_point(dest: Path) -> tuple[str, str] | None:
-    """A pip-installed package's first console script: (module, function)."""
-    for ep in sorted(dest.glob("*.dist-info/entry_points.txt")):
+def _entry_point(dest: Path, package: str = "") -> tuple[str, str] | None:
+    """The package's own first console script: (module, function). Its own - found live: the first script in
+    the folder belonged to a dependency (cffi), and every server was started as cffi's code generator."""
+    own = re.sub(r"[-_.]+", "_", package.lower())
+    infos = sorted(dest.glob("*.dist-info/entry_points.txt"))
+    if own:
+        infos = [p for p in infos if re.sub(r"[-_.]+", "_", p.parent.name.lower()).startswith(own + "_")]
+    for ep in infos:
         section = ""
         for line in ep.read_text(encoding="utf-8").splitlines():
             line = line.strip()
@@ -90,6 +95,16 @@ def _entry_point(dest: Path) -> tuple[str, str] | None:
                 mod, _, fn = line.split("=", 1)[1].strip().partition(":")
                 return mod.strip(), (fn.strip().split()[0] if fn.strip() else "main")
     return None
+
+
+def _own_files(dest: Path, package: str) -> list[Path]:
+    """The .py files the package itself installed (its dist-info RECORD) - not its dependencies'."""
+    own = re.sub(r"[-_.]+", "_", package.lower())
+    for record in dest.glob("*.dist-info/RECORD"):
+        if re.sub(r"[-_.]+", "_", record.parent.name.lower()).startswith(own + "_"):
+            rows = (line.split(",")[0] for line in record.read_text(encoding="utf-8").splitlines())
+            return sorted(dest / r for r in rows if r.endswith(".py") and (dest / r).exists())
+    return []
 
 
 def download(c: dict) -> dict:
@@ -106,13 +121,12 @@ def download(c: dict) -> dict:
                               spec], capture_output=True, text=True, timeout=600, creationflags=flags)
         if run.returncode != 0:
             raise RuntimeError(f"pip couldn't fetch {spec}: {run.stderr.strip()[-200:]}")
-        ep = _entry_point(dest)
+        ep = _entry_point(dest, c["package"])
         if ep is None:
             raise RuntimeError(f"{c['package']} has no command to start it.")
         mod, fn = ep
         command = ["{python}", "-c", f"import sys; sys.path.insert(0, r'{rel}'); from {mod} import {fn}; sys.exit({fn}())"]
-        own = dest / mod.split(".")[0]
-        files = sorted(own.rglob("*.py")) if own.is_dir() else sorted(dest.glob(f"{mod.split('.')[0]}*.py"))
+        files = _own_files(dest, c["package"])  # its own code: scanned by the Guardian, pinned
         files += sorted(dest.glob("*.dist-info/RECORD"))  # every installed file's hash, dependencies included
     else:
         npm = shutil.which("npm")

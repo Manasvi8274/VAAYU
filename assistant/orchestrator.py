@@ -551,6 +551,7 @@ class Orchestrator:
         from assistant import mcp_builder, mcp_tools  # the MCP servers the Guardian approved (and only those)
         threading.Thread(target=mcp_tools.keep_loading, daemon=True, name="mcp-load").start()
         mcp_builder.ANNOUNCE = self._speak  # "a tool to X is ready - waiting for your yes"
+        mcp_tools.ANNOUNCE = self._speak  # "On it - give me a minute" before a design or a deep think
         from assistant import research
         research.start(self.config, self.brain.client)  # reads about their topics while idle
         if self.continuous:

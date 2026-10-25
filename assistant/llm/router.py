@@ -633,11 +633,64 @@ _NEW_ABILITY = re.compile(
     r"(?:tool|mcp|mcp server|plugin|skill)(?: for| to| that can| which can| so (?:that )?you can| that will)? (?P<n2>.+)$"
     r"|^(?:give yourself|teach yourself|get|learn) the (?:ability|power|skill) to (?P<n3>.+)$", re.I)
 
+# Making and planning (mcp_servers/designer.py, planner.py - once the Guardian approved them): "design a logo for
+# Chai Point", "make a presentation on solar energy", "draw a flowchart of...", "diwali party ka poster banao",
+# "make a plan to learn Spanish", "plan my day", "add buy milk to my to-do list", "think deeply about...".
+_DESIGN_KINDS = [(r"logo", "design_logo"), (r"poster|flyer|banner|invitation|invite|greeting card|card", "design_poster"),
+                 (r"diagram|flow ?chart|mind ?map|org(?:anization)? chart|timeline|process chart", "design_diagram"),
+                 (r"presentation|ppt|power ?point|slides?|slide deck|deck", "design_presentation"),
+                 (r"document|resume|cv|bio ?data|cover letter|letter|report|essay|notice|application", "design_document"),
+                 (r"picture|image|drawing|illustration|painting|wallpaper|art|photo", "design_image")]
+_DESIGN = re.compile(r"^(?:please |can you |could you )?(?:design|create|make|draw|generate|paint|prepare|write)"
+                     r"(?: me| us)?(?: a| an| some)?(?: nice| good| beautiful| simple| professional)? (?P<kind>"
+                     + "|".join(k for k, _ in _DESIGN_KINDS) + r")\b", re.I)
+_DESIGN_HI = re.compile(r"^(?P<what>.+?)\s+(?:ka|ki|ke|wala|wali)?\s*(?P<kind>" + "|".join(k for k, _ in _DESIGN_KINDS)
+                        + r")\s+(?:banao|bana do|bana de|design karo|bnao)$", re.I)
+_PLAN = re.compile(r"^(?:please )?(?:make|create|give me|prepare|draw up)(?: me)?(?: a)? (?:plan|roadmap|schedule) "
+                   r"(?:to|for|so that i can|on how to) (?P<goal>.+)$", re.I)
+_PLAN_DAY = re.compile(r"^(?:please )?plan (?:my|the) day(?:[,:]? (?P<notes>.+))?$|^aaj ka plan (?:banao|bana do)$", re.I)
+_ADD_TASK = re.compile(r"^(?:please )?(?:add|put) (?P<task>.+?) (?:to|on|in) my (?:to-?do|todo|task)s?(?: list)?"
+                       r"(?: for (?P<due>today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday))?$", re.I)
+_LIST_TASKS = re.compile(r"^(?:what(?:'s| is) (?:on )?my (?:to-?do|todo)(?: list)?|(?:show|read|tell)(?: me)? my "
+                         r"(?:to-?do|todo|tasks?)(?: list)?|what do i have to do(?P<when> today| tomorrow)?)$", re.I)
+_DONE_TASK = re.compile(r"^(?:mark|tick off|check off) (?P<task>.+?)(?: as)? (?:done|complete|completed|finished)$|"
+                        r"^(?:tick off|check off) (?P<t2>.+)$", re.I)
+_THINK = re.compile(r"^(?:please )?think (?:deeply|hard|carefully|it through|this through)(?: about| on)? (?P<q>.+)$", re.I)
+
+
+def _route_making(t: str):
+    from assistant.tools.registry import registry
+    routed = None
+    if m := _DESIGN.match(t) or _DESIGN_HI.match(t):
+        kind = m.group("kind").lower()
+        tool = next(tool for pattern, tool in _DESIGN_KINDS if re.fullmatch(pattern, kind, re.I))
+        routed = (tool, {"description": t})
+    elif m := _PLAN.match(t):
+        routed = ("make_plan", {"goal": m.group("goal").strip(" .")})
+    elif m := _PLAN_DAY.match(t):
+        routed = ("plan_my_day", {"notes": (m.group("notes") or "").strip(" .")})
+    elif m := _ADD_TASK.match(t):
+        routed = ("add_task", {"task": m.group("task").strip(), "due": (m.group("due") or "").lower()})
+    elif m := _LIST_TASKS.match(t):
+        routed = ("list_tasks", {"when": (m.group("when") or "").strip()})
+    elif m := _DONE_TASK.match(t):
+        routed = ("complete_task", {"task": (m.group("task") or m.group("t2")).strip()})
+    elif m := _THINK.match(t):
+        routed = ("think_deeply", {"question": m.group("q").strip()})
+    if routed is None:
+        return None
+    if routed[0] not in registry._tools:
+        from assistant import mcp_tools
+        return ("reply", mcp_tools.waiting_for(routed[0]) or "I can't do that yet.")
+    return ("tool", routed[0], {k: v for k, v in routed[1].items() if v != "" or k in ("description", "goal", "task")})
+
 def _route_one(t: str):
     """One unambiguous command -> ("tool", name, args) / ("reply", text) / None."""
     if not t:
         return None
     if routed := _route_alarm(t):
+        return routed
+    if routed := _route_making(t):
         return routed
     if m := _NEW_ABILITY.match(t):
         return ("tool", "get_new_ability", {"need": next(g for g in m.groups() if g).strip(" .?")})
@@ -1088,7 +1141,8 @@ DIRECT_REPLY_TOOLS = {
     "close_browser_tab", "switch_to_browser_tab", "type_text", "send_whatsapp_message",
     "move_status_orb", "set_daily_update_time", "open_website", "get_system_status", "set_radio", "get_weather", "review_logs",
     "app_click", "app_menu", "app_type", "app_keys",  # mcp_servers/windows_apps.py: "Clicked Save in Untitled - Notepad."
-    "get_new_ability",
+    "get_new_ability", "design_image", "design_logo", "design_poster", "design_diagram", "design_presentation",
+    "design_document", "add_task", "complete_task", "make_plan", "plan_my_day", "think_deeply", "list_tasks",
 }
 
 

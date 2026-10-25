@@ -10,6 +10,7 @@ Built-in tools always win a name clash: a server can add abilities, never replac
 import asyncio
 import json
 import logging
+import os
 import re
 import sys
 import threading
@@ -26,6 +27,8 @@ LIST = REPO / "mcp_servers" / "servers.json"
 _CALL_TIMEOUT = 30.0
 _START_TIMEOUT = 30.0
 LOADED: dict[str, "Server"] = {}
+ANNOUNCE = None  # the orchestrator sets this to Vaayu's voice: "On it - give me a minute" before a slow tool
+_SAID_WAITING: set[str] = set()
 
 
 def _python() -> str:
@@ -37,9 +40,10 @@ def _python() -> str:
 class Server:
     """One MCP server on its own event-loop thread; call() is synchronous, for the tool registry."""
 
-    def __init__(self, name: str, target):
-        """target: StdioServerParameters (a real server process) or an MCPServer (in-process, tests)."""
-        self.name, self._target = name, target
+    def __init__(self, name: str, target, timeout: float = _CALL_TIMEOUT, slow=()):
+        """target: StdioServerParameters (a real server process) or an MCPServer (in-process, tests).
+        timeout: how long one call may take (a design: minutes); slow: tools announced before they run."""
+        self.name, self._target, self.timeout, self.slow = name, target, timeout, set(slow)
         self._loop = asyncio.new_event_loop()
         threading.Thread(target=self._loop.run_forever, daemon=True, name=f"mcp-{name}").start()
         self.tools = self._run(self._connect(), _START_TIMEOUT)
@@ -54,16 +58,20 @@ class Server:
         return (await self._client.list_tools()).tools
 
     def call(self, tool: str, **arguments) -> str:
-        result = self._run(self._client.call_tool(tool, arguments), _CALL_TIMEOUT)
+        if tool in self.slow and ANNOUNCE:
+            ANNOUNCE("On it - give me a minute.")
+        result = self._run(self._client.call_tool(tool, arguments), self.timeout)
         text = " ".join(getattr(c, "text", "") for c in result.content).strip()
         if result.is_error:  # said as is: "I can't see notepad open", not the SDK's "Error executing tool..."
             raise RuntimeError(re.sub(r"^Error executing tool \w+: ", "", text) or f"{tool} failed")
         return text
 
 
-def register(server: Server, registry=default_registry) -> list[str]:
+def register(server: Server, registry=default_registry, exclude=()) -> list[str]:
     added = []
     for t in server.tools:
+        if t.name in exclude:  # a tool the listing leaves out (e.g. Playwright's "run any code in the page")
+            continue
         if t.name in registry._tools:
             log.warning("MCP %s: %s clashes with a built-in tool - skipped", server.name, t.name)
             continue
@@ -120,15 +128,20 @@ def load_all(registry=default_registry) -> dict[str, list[str]]:
         if name in LOADED:
             continue
         if not upgrades.is_approved(name, entry["files"]):
-            log.warning("MCP %s: not approved by the Guardian (or changed since) - not loaded", name)
+            if name not in _SAID_WAITING:  # checked every minute - said once
+                _SAID_WAITING.add(name)
+                log.warning("MCP %s: not approved by the Guardian (or changed since) - not loaded", name)
             continue
         cmd = [c.replace("{python}", _python()) for c in entry["command"]]
         try:
-            server = Server(name, StdioServerParameters(command=cmd[0], args=cmd[1:], cwd=str(REPO)))
+            # Vaayu's own environment: the SDK's default is a bare few variables - the designer couldn't even
+            # find Edge (no ProgramFiles(x86)), and the storage paths (guardian/__init__.py) must reach them too
+            server = Server(name, StdioServerParameters(command=cmd[0], args=cmd[1:], cwd=str(REPO), env=dict(os.environ)),
+                            timeout=float(entry.get("timeout", _CALL_TIMEOUT)), slow=entry.get("slow", ()))
         except Exception as exc:
             log.warning("MCP %s didn't start: %s", name, exc)
             continue
         LOADED[name] = server
-        out[name] = register(server, registry)
+        out[name] = register(server, registry, exclude=entry.get("exclude", ()))
         log.info("MCP %s loaded: %s", name, ", ".join(out[name]))
     return out
