@@ -42,6 +42,7 @@ from zoneinfo import ZoneInfo
 
 import assistant.tools  # noqa: F401  (registers every tool)
 from assistant.activation.hotkey_listener import HotkeyActivator
+from assistant.audio.barge_in import BargeIn
 from assistant.audio.capture import record
 from assistant.audio.vad_listener import VADListener
 from assistant.config_schema import AppConfig
@@ -225,9 +226,13 @@ class Orchestrator:
         if self.gui_queue is not None:
             self.gui_queue.put({"kind": "state", "value": new_state.value})
 
-    def _speak(self, text: str) -> None:
+    def _speak(self, text: str) -> bool:
+        """Speaks; True if the user cut it off with "stop" (audio/barge_in.py) - Vaayu then
+        just goes back to listening."""
+        stop, barge = threading.Event(), None
         if self.continuous:
             self.listener.mute()
+            barge = BargeIn(self.listener, self.stt, stop, text)
         if _monitor is not None:
             _monitor.suppress_until = float("inf")  # Vaayu's own voice isn't "media"
         try:
@@ -235,14 +240,24 @@ class Orchestrator:
                 self.tts.speak_with_amplitude(
                     text,
                     on_amplitude=lambda v: self.gui_queue.put({"kind": "amplitude", "value": v}),
+                    **({"stop_event": stop} if barge else {}),
                 )
+            elif barge:
+                self.tts.speak(text, stop_event=stop)
             else:
                 self.tts.speak(text)
         finally:
+            if barge:
+                barge.close()
             if _monitor is not None:
                 _monitor.suppress_until = time.time() + 0.6  # the speaker's tail after playback ends
             if self.continuous:
                 self.listener.unmute()
+        if stop.is_set():
+            print(f"Vaayu: (stopped - heard {barge.heard!r})")
+            interaction_log.log_event("barge_in", heard=barge.heard, was_saying=text)
+            self._name_window_until = time.time() + _NAME_WINDOW_SECONDS  # the next sentence is for Vaayu
+        return stop.is_set()
 
     def _voice_confirm(self, name: str, arguments: dict) -> bool:
         """Confirmation gate for sensitive tools (requires_confirmation=True),

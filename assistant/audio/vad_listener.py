@@ -72,6 +72,10 @@ class VADListener:
     def _callback(self, indata, _frames, _time_info, _status) -> None:
         if not self._muted:
             self._queue.put(indata.copy().flatten())
+        elif self.tap is not None:  # while Vaayu speaks: frames go to the "stop" detector instead
+            self.tap(indata.copy().flatten())
+
+    tap = None  # set by orchestrator's barge-in while speaking; a callable(frame)
 
     def start(self) -> None:
         self._stream = sd.InputStream(

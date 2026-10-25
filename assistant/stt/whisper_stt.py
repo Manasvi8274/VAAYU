@@ -46,7 +46,8 @@ _VOCAB_PROMPT = (
 # silently dropped every one of them. These pass; other single words (the
 # usual noise hallucinations: "you", "Thank you", "Bye") still don't.
 _ONE_WORD_COMMANDS = {"pause", "play", "resume", "stop", "mute", "unmute", "next", "previous", "louder", "quieter",
-                      "skip", "vaayu", "vayu", "replay", "restart", "fullscreen", "screenshot", "minimize"}
+                      "skip", "vaayu", "vayu", "replay", "restart", "fullscreen", "screenshot", "minimize",
+                      "ruko", "bas", "chup", "wait", "enough", "quiet", "cancel"}  # "stop" while Vaayu talks (audio/barge_in.py)
 
 # Approximate extra VRAM per model on the GPU (int8_float16, measured on the
 # GTX 1650 with the 3B brain loaded: small +348 MiB, large-v3-turbo +964 MiB).

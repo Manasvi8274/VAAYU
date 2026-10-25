@@ -29,8 +29,11 @@ class Pyttsx3Engine(TTSEngine):
         engine.setProperty("rate", self.rate)
         return engine
 
-    def speak(self, text: str) -> None:
+    def speak(self, text: str, stop_event=None) -> None:
         if not text:
+            return
+        if stop_event is not None:  # interruptible: played by us, so it can be cut off mid-sentence
+            self.speak_with_amplitude(text, stop_event=stop_event)
             return
         engine = self._new_engine()
         engine.say(text)
@@ -46,6 +49,7 @@ class Pyttsx3Engine(TTSEngine):
         text: str,
         on_amplitude: Callable[[float], None] | None = None,
         chunk_seconds: float = 0.03,
+        stop_event=None,
     ) -> None:
         """Like speak(), but synthesizes to a buffer and plays it via
         sounddevice instead of pyttsx3's own playback, reporting real RMS
@@ -72,6 +76,9 @@ class Pyttsx3Engine(TTSEngine):
             chunk_size = max(1, int(framerate * chunk_seconds))
             pos = 0
             while pos < len(audio):
+                if stop_event is not None and stop_event.is_set():  # the user said "stop"
+                    sd.stop()
+                    return
                 chunk = audio[pos : pos + chunk_size]
                 if on_amplitude is not None and len(chunk) > 0:
                     rms = float(np.sqrt(np.mean(chunk.astype(np.float64) ** 2)))
