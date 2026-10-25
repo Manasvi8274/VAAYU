@@ -347,6 +347,10 @@ _NOTE = re.compile(r"^(?:note that|note down|make a note(?: that)?|add a note(?:
 _REMEMBER_NAME = re.compile(r"^(?:remember|save|add|learn)(?: the| my)? (?P<k>channel|contact|app) (?:name )?(?P<n>.+?)"
                             r"(?: to my (?:channels|contacts|apps))?$", re.I)
 _LIST_NOTES = re.compile(r"^(?:show|read|list)(?: me)?(?: all)? my(?: last \d+)? notes$|^what are my notes$|^mere notes (?:dikhao|batao)$", re.I)
+# The daily log review on demand (assistant/daily_review.py)
+_REVIEW_LOGS = re.compile(r"^(?:review|scan|check|go through|analy[sz]e)(?: all)?(?: your| the| today'?s| my)? logs?(?: now)?$|"
+                          r"^(?:do|run|start)(?: the| your| a)? (?:daily )?(?:log )?review$|"
+                          r"^logs? (?:check|scan|review) (?:karo|kar do|kro)$|^apne logs (?:check|dekh) (?:karo|lo)$", re.I)
 
 # WhatsApp - the ONLY way a recipient gets chosen: parsed verbatim from the
 # user's own words, never picked by the model (see _LLM_BLOCKED_TOOLS).
@@ -592,6 +596,8 @@ def _route_one(t: str):
             return routed
     if m := _REMEMBER_NAME.match(t):
         return ("tool", "remember_name", {"kind": m.group("k").lower(), "name": m.group("n").strip()})
+    if _REVIEW_LOGS.match(t):
+        return ("tool", "review_logs", {})
     if _LIST_NOTES.match(t):
         return ("tool", "list_notes", {})
     if m := _NOTE.match(t):
@@ -867,7 +873,7 @@ DIRECT_REPLY_TOOLS = {
     "restore_window", "switch_to_window", "play_video_on_youtube", "play_latest_video_from_channel",
     "add_note", "set_video_volume", "set_video_fullscreen", "seek_video", "control_video_playback",
     "close_browser_tab", "switch_to_browser_tab", "type_text", "send_whatsapp_message",
-    "move_status_orb", "set_daily_update_time", "open_website", "get_system_status", "set_radio", "get_weather",
+    "move_status_orb", "set_daily_update_time", "open_website", "get_system_status", "set_radio", "get_weather", "review_logs",
 }
 
 

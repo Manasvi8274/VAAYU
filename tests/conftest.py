@@ -202,6 +202,23 @@ def _no_real_start_menu_launch():
 
 
 @pytest.fixture(autouse=True, scope="session")
+def _isolated_daily_review(tmp_path_factory):
+    # The daily review DELETES the real logs and runs a real `claude` session - tests get
+    # temp paths, no Claude, and no model calls (originals kept as _real_* for its own tests).
+    from assistant import daily_review
+    base = tmp_path_factory.mktemp("review")
+    with pytest.MonkeyPatch.context() as mp:
+        for name, rel in (("INTERACTIONS", "interactions.jsonl"), ("ISSUES", "issues_log.jsonl"),
+                          ("VAAYU_LOG", "vaayu.log"), ("AUDIO_DIR", "audio"), ("REVIEWS", "reviews")):
+            mp.setattr(daily_review, name, base / rel)
+        mp.setattr(daily_review, "_real_claude_session", daily_review.claude_session, raising=False)
+        mp.setattr(daily_review, "claude_session", lambda review_dir, day: "Claude session stubbed in tests.")
+        mp.setattr(daily_review, "_real_learn_locally", daily_review.learn_locally, raising=False)
+        mp.setattr(daily_review, "learn_locally", lambda events, review_dir, mentioned: [])
+        yield
+
+
+@pytest.fixture(autouse=True, scope="session")
 def _no_real_kokoro():
     # Loading Kokoro takes the GPU (~1.1 GB) and a few seconds - tests use the plain voice engine.
     from assistant import orchestrator

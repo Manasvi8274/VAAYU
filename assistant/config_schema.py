@@ -70,16 +70,16 @@ class LoggingConfig(BaseModel):
 
 
 class SelfReviewConfig(BaseModel):
-    # Daily check-in: Vaayu logs real problems it hits during normal use
-    # (tool failures, etc. - see assistant/self_review/issue_log.py) and, at
-    # this time each day, asks permission to write them up as a report for a
-    # real fix session - it does NOT rewrite its own code autonomously (see
-    # that package's docstring for why). Times are HH:MM 24-hour, IST by
-    # default per explicit instruction ("timings will be in IST until I
-    # mention any timezone format").
+    # Daily log review (assistant/daily_review.py): at this time each day,
+    # in the background, Vaayu digests the day's logs, learns from them, runs
+    # a Claude fix session if claude_fix (the user's Claude Pro login via the
+    # `claude` CLI - guardian changes are always rejected), then deletes the
+    # raw logs. Times are HH:MM 24-hour, IST by default per explicit
+    # instruction ("timings will be in IST until I mention any timezone format").
     enabled: bool = True
     check_in_time: str = "21:00"
     timezone: str = "Asia/Kolkata"
+    claude_fix: bool = True
 
 
 class AppConfig(BaseModel):

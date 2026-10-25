@@ -323,17 +323,10 @@ class Orchestrator:
         return confirmed
 
     def _maybe_run_daily_checkin(self) -> None:
-        """Proactive, Vaayu-initiated check-in about issues logged during
-        real use (see self_review/issue_log.py) - NOT autonomous code
-        changes, just asking permission to write a report for a real fix
-        session. Runs once per calendar day (in the configured timezone),
-        at or after the configured time, regardless of sleep/awake state -
-        this is Vaayu speaking up on its own, not gated behind the user
-        addressing it first. If today's check-in already happened (said yes
-        or no), it stays quiet the rest of the day; if the process was
-        asleep/off straight through the scheduled time, it still asks the
-        next time this runs after that time, even if that's hours later -
-        it does not skip a day just because the exact moment passed."""
+        """The daily log review (assistant/daily_review.py), once per calendar day
+        at or after self_review.check_in_time, in the background - no speaking, no
+        question, never blocking a turn. If Vaayu was off through that time it
+        still runs the next time this is reached, hours late if need be."""
         if not self.config.self_review.enabled:
             return
         try:
@@ -345,33 +338,13 @@ class Orchestrator:
         now = datetime.now(tz)
         if (now.hour, now.minute) < (hour, minute):
             return
-
         today_str = now.date().isoformat()
         if issue_log.read_last_checkin_date() == today_str:
             return
-        issue_log.write_last_checkin_date(today_str)  # offered today, regardless of outcome below
-
-        issues = issue_log.read_unacknowledged()
-        if not issues:
-            return
-
-        summary = issue_log.summarize_for_speech(issues)
-        print(f"Vaayu (daily check-in): {summary}")
-        self._speak(f"Quick check-in - I ran into {summary}. Want me to write these up for review?")
-
-        audio = self._capture_utterance()
-        if len(audio) == 0:
-            return
-        answer_text = self.stt.transcribe(audio)
-        print(f"You said: {answer_text}")
-
-        if is_affirmative(answer_text):
-            report_path = issue_log.write_daily_report(issues)
-            issue_log.acknowledge_all()
-            print(f"Vaayu: wrote {report_path}")
-            self._speak("Update's done - I've written up today's issues for review.")
-        else:
-            self._speak("Okay, I'll bring it up again tomorrow.")
+        issue_log.write_last_checkin_date(today_str)  # once a day, whatever the review finds
+        from assistant import daily_review
+        if daily_review.start_in_background("scheduled"):
+            print("Vaayu: started the daily log review in the background.")
 
     def handle_one_turn(self) -> None:
         self._maybe_run_daily_checkin()

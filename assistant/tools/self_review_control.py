@@ -74,3 +74,17 @@ def set_daily_update_time(time: str) -> str:
     tz_label = _TZ_LABELS.get(config.self_review.timezone, config.self_review.timezone)
     set_check_in_time(hhmm)
     return f"Daily check-in time set to {hhmm} {tz_label}."
+
+
+@registry.register(
+    name="review_logs",
+    description=("Start Vaayu's log review now (the same one that runs daily): digest today's logs, learn from "
+                 "them, run a Claude fix session, then delete the raw logs. Use for 'review your logs', "
+                 "'scan your logs', 'logs check karo'."),
+    parameters={"type": "object", "properties": {}},
+)
+def review_logs() -> str:
+    from assistant import daily_review
+    if not daily_review.start_in_background("voice"):
+        return "A log review is already running - the summary will be in data/reviews."
+    return "Started the log review - I'll have the summary in data/reviews."
