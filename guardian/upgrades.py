@@ -373,6 +373,11 @@ def reject(uid: int, by: str) -> dict:
     return r
 
 
+def approved_pin(name: str) -> str:
+    """The approved files' SHA-256 ('' if not approved) - what a cached tool list is valid for."""
+    return _approved().get(name, {}).get("sha256", "")
+
+
 def is_approved(name: str, files: list[str]) -> bool:
     """Approved, and still exactly the files that were approved."""
     entry = _approved().get(name)

@@ -214,3 +214,32 @@ def test_approve_all_with_a_wrong_pin_approves_nothing(repo, monkeypatch):
     monkeypatch.setattr(getpass, "getpass", lambda prompt="": "0000")
     upgrades.cli(["review"])
     assert {r["status"] for r in upgrades.reports()} == {"pending"}
+
+
+def test_a_known_server_starts_only_when_first_used_and_only_once(tmp_path, monkeypatch):
+    # 15 servers idling took ~1.5 GB of RAM - they start on their first call instead.
+    listing = tmp_path / "servers.json"
+    listing.write_text(json.dumps([{"name": "calc", "files": ["mcp_servers/c.py"], "command": ["x"]}]))
+    schemas = tmp_path / "schemas.json"
+    schemas.write_text(json.dumps({"calc": {"pin": "p1", "tools": [
+        {"name": "add", "description": "Add", "input_schema": {"type": "object", "properties": {
+            "a": {"type": "integer"}, "b": {"type": "integer"}}, "required": ["a", "b"]}}]}}))
+    monkeypatch.setattr(mcp_tools, "LIST", listing)
+    monkeypatch.setattr(mcp_tools, "SCHEMAS", schemas)
+    monkeypatch.setattr(mcp_tools, "LOADED", {})
+    monkeypatch.setattr(upgrades, "is_approved", lambda name, files: True)
+    monkeypatch.setattr(upgrades, "approved_pin", lambda name: "p1")
+    started = []
+
+    class FakeServer:
+        def __init__(self, name, params, timeout=0, slow=()):
+            started.append(name)
+
+        def call(self, tool, **args):
+            return str(args["a"] + args["b"])
+    monkeypatch.setattr(mcp_tools, "Server", FakeServer)
+    reg = ToolRegistry()
+    assert mcp_tools.load_all(reg) == {"calc": ["add"]} and started == []  # registered, nothing running
+    assert reg.dispatch("add", {"a": 2, "b": 3}) == {"ok": True, "result": "5"} and started == ["calc"]
+    reg.dispatch("add", {"a": 1, "b": 1})
+    assert started == ["calc"]  # once

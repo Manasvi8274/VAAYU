@@ -252,7 +252,8 @@ def _render_mermaid(code: str, png: Path) -> str:
         page = Path(tmp) / "diagram.html"
         page.write_text(html, encoding="utf-8")
         base = [_edge(), "--headless=new", "--disable-gpu", "--allow-file-access-from-files", "--hide-scrollbars",
-                f"--user-data-dir={EDGE_PROFILE}", "--virtual-time-budget=8000", "--window-size=1600,1200"]
+                f"--user-data-dir={EDGE_PROFILE}", "--virtual-time-budget=8000", "--window-size=1600,1200",
+                "--force-device-scale-factor=2"]  # twice the pixels: crisp on a screen and in slides
         flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
         dom = subprocess.run(base + ["--dump-dom", page.as_uri()], capture_output=True, text=True, timeout=60,
                              encoding="utf-8", errors="replace", creationflags=flags).stdout
