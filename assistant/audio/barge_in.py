@@ -16,7 +16,7 @@ import threading
 import numpy as np
 
 STOP_PHRASE = re.compile(
-    r"^(?:(?:hey|ok|okay|arre|arey|vaa?yu|vayu|bhai|please)\s+)*"
+    r"^(?:(?:hey|ok|okay|arre|arey|vaa?yu|vayu|bhai|please|no)\s+)*"
     r"(?:stop(?: it| that| talking| speaking| now| please)?|stop stop|b[au]s(?: karo| kar| kar do| bas)?|ruko|ruk jao|"
     r"chup(?: karo| ho jao| raho)?|shut up|enough|wait|quiet|be quiet|cancel|thik hai|theek hai|okay stop|ok stop|"
     r"hold on|never ?mind)(?:\s+(?:vaa?yu|vayu|bhai|please|yaar))*$", re.I)
@@ -24,7 +24,12 @@ _GATE_MULTIPLIER = 1.3  # calibration knob: x the listener's normal speech gate 
 _SPEECH_FRAMES = 4      # 120 ms of speech starts a capture (a short "stop." missed at 180)
 _END_SILENCE_FRAMES = 10  # 300 ms of quiet ends it
 _MAX_FRAMES = 60        # 1.8 s: stop phrases are short
-_MIN_WORDS = 2          # calibration knob: words of the user's own needed to cut Vaayu off (besides "stop")
+# calibration knob: words of the user's own needed to cut Vaayu off (besides "stop" or his name). Real logs
+# (10-26..10-31): 13 cut-offs, every one his own voice garbled by the mic - "Merrick by c.", "You're a hero.",
+# "Yes code.", "By code deco." (2-3 words) - and the user said "I'm not able to listen to you sometimes in the
+# middle". 4 words keeps those out; a real sentence of the user's is longer.
+_MIN_WORDS = 4
+_NAME = re.compile(r"\b(?:vaa?yu|vayu|waayu|baayu)\b", re.I)
 _ECHO_SHARE = 0.6       # this share of the words found in what Vaayu is saying = his own echo
 
 
@@ -52,7 +57,14 @@ def should_interrupt(heard: str, speaking: str) -> bool:
     if is_stop(heard, speaking):
         return True
     words = _words(heard).split()
-    return len(words) >= _MIN_WORDS and not is_echo(heard, speaking)
+    if _NAME.search(heard or "") and len(words) >= 2:  # "Vaayu, listen" - his name is never in his own replies
+        return True
+    if is_echo(heard, speaking) or len(words) < 2:
+        return False
+    if len((heard or '').split()) >= _MIN_WORDS:  # spoken words ("you're" is one)
+        return True
+    from assistant.llm import router  # a short one only if it's a real command: "open chrome", "pause the song"
+    return bool(router.fast_route(heard))
 
 
 class BargeIn:

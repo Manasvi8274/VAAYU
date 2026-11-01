@@ -135,3 +135,16 @@ def test_a_command_said_over_vaayu_runs_next_turn(monkeypatch):
     o._maybe_run_daily_checkin = lambda: None
     o.handle_one_turn()
     assert handled == ["open chrome"] and o._pending_text is None
+
+
+@pytest.mark.parametrize("heard", ["Merrick by c.", "You're a hero.", "Yes code.", "By code deco.", "Brought it by.",
+                                   "Lobby on kand-.", "Right open.", "Cutting down."])
+def test_his_own_garbled_voice_never_cuts_him_off(heard):
+    # Real logs 10-26..10-31: all 13 cut-offs were these - and the user couldn't hear him "in the middle".
+    from assistant.audio.barge_in import should_interrupt
+    assert not should_interrupt(heard, "Bhai, it sounds like your speakers are having a hiccup.")
+
+
+def test_his_name_always_cuts_him_off():
+    from assistant.audio.barge_in import should_interrupt
+    assert should_interrupt("Vaayu listen", "Here is a long answer about the weather.")

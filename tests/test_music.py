@@ -246,3 +246,37 @@ def test_the_best_matching_song_like_result_is_played_not_just_the_first():
 def test_song_phrases_that_went_to_the_slow_model(said, action):
     from assistant.llm import router
     assert router.fast_route(said) == ("tools", [("youtube_control", {"action": action})])
+
+
+@pytest.mark.parametrize("said, want", [
+    ("Hey why you play band band bollywood music.", ("play_music", {"query": "band band bollywood music"})),
+    ("Hold the sound.", ("control_media", {"action": "pause"})),          # real log: said paused, wasn't
+    ("Hey vaayu pause that.", ("control_media", {"action": "pause"})),
+    ("I'm not able to listen to the song.", ("music_control", {"action": "cant_hear"})),
+    ("Update yourself.", ("review_logs", {})),
+    ("Have you checked your logs.", ("review_logs", {})),
+    ("I want to switch to another song the song name is believer", ("play_music", {"query": "believer"})),
+    ("Can you recommend me some song names.", ("music_control", {"action": "recommend"})),
+])
+def test_phrases_from_the_10_26_to_10_31_logs(said, want):
+    from assistant.llm import router
+    assert router.fast_route(said) == ("tools", [want])
+
+
+def test_play_me_a_joke_is_not_a_song():
+    from assistant.llm import router
+    assert router.fast_route("Play me a joke.") is None
+
+
+def test_a_cover_is_not_played_when_the_original_was_asked_for():
+    results = [{"title": "Gulabi Aankhen Unplugged cover by Atif", "channel": "vishesh", "duration": 200},
+               {"title": "Gulabi Aankhen Jo Teri Dekhi | Full Song", "channel": "Saregama Music", "duration": 230}]
+    assert music._rank(results, "gulabi aankhen jo teri dekhi")[0]["channel"] == "Saregama Music"
+    assert music._rank(results, "gulabi aankhen unplugged cover")[0]["channel"] == "vishesh"
+
+
+def test_pause_after_his_own_hold_says_paused_and_stays_paused(playing):
+    playing.paused.set()
+    music._held.set()
+    assert music.control("pause") == "Paused the song."
+    assert not music._held.is_set() and playing.paused.is_set()

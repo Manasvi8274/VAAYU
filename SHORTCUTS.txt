@@ -1,0 +1,22 @@
+Vaayu desktop shortcuts - recreate them by pasting this into PowerShell (from any folder).
+They run whatever branch is checked out in C:\Users\manu1\Documents\GitHub\TEST (use main: git checkout main).
+
+$repo = "C:\Users\manu1\Documents\GitHub\TEST"
+$desk = [Environment]::GetFolderPath("Desktop")
+$ws   = New-Object -ComObject WScript.Shell
+function Make($name, $exe, $arguments, $desc) {
+    $s = $ws.CreateShortcut("$desk\$name.lnk")
+    $s.TargetPath = "$repo\.venv\Scripts\$exe"; $s.Arguments = $arguments
+    $s.WorkingDirectory = $repo; $s.Description = $desc; $s.Save()
+}
+Make "Start Vaayu"    "pythonw.exe" "-m guardian run"     "Start Vaayu under the guardian"
+Make "Stop Vaayu"     "pythonw.exe" "-m assistant.stop"   "Vaayu says goodbye and stops (normal stop)"
+Make "Kill Vaayu"     "pythonw.exe" "-m guardian kill"    "Emergency: the guardian force-kills Vaayu"
+Make "Vaayu Upgrades" "python.exe"  "-m guardian review"  "Read and approve Vaayu's pending upgrades"
+
+What each does:
+  Start Vaayu     python -m guardian run      guardian starts Vaayu (and Ollama if it isn't running)
+  Stop Vaayu      python -m assistant.stop    graceful: Vaayu finishes, says goodbye, exits; guardian stops too
+  Kill Vaayu      python -m guardian kill     force: guardian kills Vaayu immediately (also "Vaayu die",
+                                              Ctrl+Alt+Shift+F12)
+  Vaayu Upgrades  python -m guardian review   approve/reject pending upgrades (opens a console window)

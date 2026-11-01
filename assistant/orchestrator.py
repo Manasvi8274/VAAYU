@@ -53,6 +53,7 @@ from assistant.control_phrases import (
     detect_control_command,
     has_command_content,
     is_affirmative,
+    command_part,
     is_name_mentioned,
     text_after_name,
 )
@@ -244,6 +245,21 @@ def _make_tts(cfg):
             print(f"Vaayu: Kokoro voice unavailable ({exc}) - using the Windows voice.")
             interaction_log.log_error("tts_init", exc)
     return Pyttsx3Engine(rate=cfg.rate)
+
+
+def _restart_ollama(wait: float = 30.0) -> bool:
+    """Start Ollama's server (the guardian's way: models in this folder) and wait until it answers."""
+    import urllib.request
+    from guardian.core import _ensure_ollama
+    _ensure_ollama()
+    deadline = time.time() + wait
+    while time.time() < deadline:
+        try:
+            urllib.request.urlopen("http://127.0.0.1:11434/api/version", timeout=2)
+            return True
+        except OSError:
+            time.sleep(1)
+    return False
 
 
 class State(Enum):
@@ -517,8 +533,8 @@ class Orchestrator:
                 # Real log: "Pause the video." heard perfectly, twice, and ignored for lacking "Vaayu".
                 interaction_log.log_event("player_command", text=text)
             else:
-                rest = text_after_name(text)
-                if not has_command_content(rest):
+                rest = command_part(text)
+                if not rest:
                     self._listening_chime()
                     self._name_window_until = time.time() + _NAME_WINDOW_SECONDS
                     interaction_log.log_event("name_only_media", text=text)
@@ -526,7 +542,7 @@ class Orchestrator:
                 interaction_log.log_event("media_command", heard=text, used=rest)
                 text = rest
 
-        if self.state is State.AWAKE and is_name_mentioned(text) and not has_command_content(text_after_name(text)):
+        if self.state is State.AWAKE and is_name_mentioned(text) and not command_part(text):
             # just "Hey Vaayu" while awake - real log: it went to the chat model, 19.6 s for "Heyyaar, kya problem hai?"
             self._listening_chime()
             self._name_window_until = time.time() + _NAME_WINDOW_SECONDS
@@ -538,7 +554,12 @@ class Orchestrator:
         error = None
         with Timer() as brain_time:
             try:
-                reply, self.messages = self.brain.respond(self.messages, registry, confirm=self._voice_confirm)
+                try:
+                    reply, self.messages = self.brain.respond(self.messages, registry, confirm=self._voice_confirm)
+                except ConnectionError:
+                    # Real log (10-26): "Failed to connect to Ollama" - its server had died. Start it and try once more.
+                    _restart_ollama()
+                    reply, self.messages = self.brain.respond(self.messages, registry, confirm=self._voice_confirm)
             except Exception as exc:  # e.g. a model call timing out - must not end the listening loop
                 error = exc
                 issue_log.log_issue(user_said=text, tool_name=None, error=f"brain.respond failed: {exc!r}", kind="respond_crash")

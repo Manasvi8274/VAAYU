@@ -138,6 +138,9 @@ class _Player:
                 resume_at = self.position
                 threading.Thread(target=_resume_fresh, args=(track, resume_at), daemon=True).start()
                 return
+            # Real log (10-28): the stream timed out ("Error number -138") on every try and nothing played -
+            # while Vaayu had said "Playing". The next search result instead.
+            finished = not self._stop.is_set()
         finally:
             with self.lock:
                 self._buf = np.zeros((0, _CHANNELS), np.float32)
@@ -237,7 +240,10 @@ _NOT_MUSIC = re.compile(r"\b(?:trailer|teaser|full movie|full film|movie scene|s
                         # real log: "Bollywood song" played "Guess The Bollywood Song By Emoji"
                         r"guess|quiz|emoji|challenge|prank|vlog|tutorial|lesson|how to)\b", re.I)
 _SONGLIKE = re.compile(r"\b(?:song|songs|lyrical|lyrics|lyric|audio|video song|music video|official video|full song|"
-                       r"jukebox|unplugged|cover|remix|lofi)\b", re.I)
+                       r"jukebox)\b", re.I)
+# Versions nobody asked for: real log (10-31) "sharabi aankhe... gulabi aankhe" played an unplugged cover.
+_VERSION = re.compile(r"\b(?:cover|unplugged|remix|lofi|lo-fi|slowed|reverb|reprise|karaoke|instrumental|8d|"
+                      r"female version|male version|mashup)\b", re.I)
 _LABELS = re.compile(r"t-?series|zee music|sony music|saregama|tips|yrf|speed records|eros|venus|shemaroo|desi music|"
                      r"hit music|vevo|records|music", re.I)
 
@@ -250,8 +256,10 @@ def _rank(results: list[dict], query: str) -> list[dict]:
 
     def score(r):
         title = r["title"].lower()
+        version = _VERSION.search(title)
         return (2 * sum(w in title for w in words) + 2 * bool(_SONGLIKE.search(title))
-                + 1 * bool(_LABELS.search(r.get("channel") or "")))
+                + 1 * bool(_LABELS.search(r.get("channel") or ""))
+                - (3 if version and version.group(0).lower() not in query.lower() else 0))
     return sorted(results, key=score, reverse=True)
 
 
@@ -345,9 +353,28 @@ def play_music(query: str, seconds: int | None = None) -> str:
     return f"Playing {_spoken(track['title'])}{by}{for_}."
 
 
+def recommend(n: int = 5) -> str:
+    """Song names from what the user actually listens to (youtube_taste: songs heard at least half way).
+    Real log: "Can you recommend me some song names" - 27 s through the model, and a generic list."""
+    from assistant.tools import youtube_taste
+    channels, topics = youtube_taste.profile()
+    words = [w for w, _ in topics.most_common(6) if not w.isdigit()][:3]
+    query = " ".join(words) + " songs" if words else "top hindi songs this week"
+    heard = {youtube_taste._title_key(r.get("title", "")) for r in youtube_taste.history(500)}
+    picks = [r for r in _rank([r for r in _search(query, 15) if not _NOT_MUSIC.search(r["title"])], query)
+             if youtube_taste._title_key(r["title"]) not in heard]
+    names = list(dict.fromkeys(_spoken(r["title"]) for r in picks))[:n]
+    if not names:
+        raise RuntimeError("I couldn't find songs to suggest right now.")
+    why = " - from what you listen to" if words else ""
+    return f"Try these{why}: " + "; ".join(names) + ". Say 'play' and the name."
+
+
 def control(action: str, level: int | None = None) -> str:
     """Pause/resume/stop/next/volume/seek for the song this player is playing."""
-    if not player.track and action != "stop":
+    if action == "recommend":
+        return recommend()
+    if not player.track and action not in ("stop", "cant_hear"):
         raise RuntimeError("No song is playing.")
     if action in ("pause", "play_pause", "stop", "play", "resume", "next") or action.startswith("seek"):
         _held.clear()  # the user decided - Vaayu's own pause-while-talking no longer applies
@@ -362,7 +389,9 @@ def control(action: str, level: int | None = None) -> str:
         player.paused.clear()
         return "Playing."
     if action == "pause":
-        return "It's already paused."
+        # (Vaayu had paused it himself when his name was said - now it stays paused until asked.
+        # Real log: "It's already paused." answered every "pause the song" after "Hey Vaayu".)
+        return "Paused the song."
     if action == "stop":
         player.queue = []
         player.stop()
@@ -398,6 +427,28 @@ def control(action: str, level: int | None = None) -> str:
             player.play(player.track, start_at=player.position)
             player.stop_at = player.start_at + float(level or 15)
         return f"Playing {int(level or 15)} seconds."
+    if action == "cant_hear":  # "I'm not able to hear the song" (real log: 44 s through the model)
+        if not player.track:
+            raise RuntimeError("No song is playing - tell me which one to play.")
+        if not player.active:
+            if player.queue:
+                threading.Thread(target=_autoplay_next, daemon=True).start()
+                return "That song didn't load - playing the next one."
+            raise RuntimeError("The song didn't load. Ask me to play it again.")
+        player.paused.clear()
+        _held.clear()
+        if player.volume < 0.5:
+            player.volume = 0.8
+        from assistant.tools import media
+        try:
+            ep = media._endpoint()
+            if ep.GetMute():
+                ep.SetMute(0, None)
+                return "The laptop was muted - unmuted it, the song is playing."
+            level = round(ep.GetMasterVolumeLevelScalar() * 100)
+        except Exception:
+            level = None
+        return "It's playing now" + (f" - the laptop volume is at {level}%." if level is not None else ".")
     if action == "now_playing":
         t = player.track or {}
         state = "paused" if player.paused.is_set() or not player.active else "playing"
@@ -415,7 +466,7 @@ def control(action: str, level: int | None = None) -> str:
     parameters={"type": "object", "properties": {
         "action": {"type": "string", "enum": ["pause", "resume", "stop", "next", "volume_up", "volume_down",
                                                "volume_set", "mute", "unmute", "seek_to", "seek_forward", "seek_back",
-                                               "restart", "play_for", "now_playing"]},
+                                               "restart", "play_for", "now_playing", "cant_hear", "recommend"]},
         "level": {"type": "integer"}}, "required": ["action"]},
 )
 def music_control(action: str, level: int | None = None) -> str:

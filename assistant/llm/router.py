@@ -694,11 +694,49 @@ def _route_making(t: str):
         return ("reply", mcp_tools.waiting_for(routed[0]) or "I can't do that yet.")
     return ("tool", routed[0], {k: v for k, v in routed[1].items() if v != "" or k in ("description", "goal", "task")})
 
+# From the 10-26..10-31 logs: phrases that went to the slow model (11-44 s), or did the wrong thing.
+_WHY_PLAY = re.compile(r"^(?:hey |okay |ok )?(?:why|wai|vai) (?:don'?t )?(?:you|u) play(?: me)? (?P<q>.+)$", re.I)  # "will you play"
+_HOLD = re.compile(r"^(?:hold|pause|stop)(?: the| this| that)? (?:sound|audio|music|song|gaana)$|"
+                   r"^(?:pause|hold) (?:that|this|it)$", re.I)  # real log: "Hold the sound." - said paused, wasn't
+_CANT_HEAR = re.compile(r"^(?:i'?m |i am |i )?(?:not able to|can'?t|cannot|unable to) (?:hear|listen to)(?: the)? "
+                        r"(?:song|music|gaana|sound)$|^(?:song|music|gaana) (?:is not|isn'?t) (?:playing|audible)$|"
+                        r"^(?:awaaz|aawaz) nahi aa rahi$", re.I)
+_UPDATE_SELF = re.compile(r"^(?:please )?(?:update|upgrade|improve|fix) yourself(?: from (?:the |your )?logs?)?$|"
+                          r"^(?:have you |did you )?(?:checked|check|read|seen) (?:your|the) logs?$", re.I)
+_SONG_NAMED = re.compile(r"^(?:i want to |let'?s )?(?:switch|change) (?:to )?(?:another|a different|the next|other) song"
+                         r"(?:,? the song(?:'s)? name is| called| named| to)? (?P<q>.+)$|^the song(?:'s)? name is (?P<q2>.+)$",
+                         re.I)
+_RECOMMEND_SONGS = re.compile(r"^(?:can you |could you |please )?(?:recommend|suggest)(?: me)?(?: some| a few| good)?"
+                              r" (?:songs?|music|gaane)(?: names?)?(?: to listen to)?$", re.I)
+_TITLE_BY = re.compile(r"^(?P<q>[\w' ]{2,40}?) (?:by|from) (?P<a>[\w' ]{2,30})$", re.I)  # "Believer from Imagine Dragons"
+
+
+def _route_log_fixes(t: str):
+    if m := _WHY_PLAY.match(t):
+        return ("tool", "play_music", {"query": m.group("q").strip(" .")})
+    if _HOLD.match(t):
+        return ("tool", "control_media", {"action": "pause"})
+    if _CANT_HEAR.match(t):
+        return ("tool", "music_control", {"action": "cant_hear"})
+    if _UPDATE_SELF.match(t):
+        return ("tool", "review_logs", {})
+    if m := _SONG_NAMED.match(t):
+        return ("tool", "play_music", {"query": (m.group("q") or m.group("q2")).strip(" .")})
+    if _RECOMMEND_SONGS.match(t):
+        return ("tool", "music_control", {"action": "recommend"})
+    if (m := _TITLE_BY.match(t)) and len(t.split()) <= 7:
+        from assistant.tools import music
+        if music.player.track:  # songs have been asked for this session - a bare "<title> by <artist>" is one
+            return ("tool", "play_music", {"query": t})
+    return None
+
 def _route_one(t: str):
     """One unambiguous command -> ("tool", name, args) / ("reply", text) / None."""
     if not t:
         return None
     if routed := _route_alarm(t):
+        return routed
+    if routed := _route_log_fixes(t):
         return routed
     if routed := _route_making(t):
         return routed
@@ -936,7 +974,7 @@ _GENRES = {"bollywood", "punjabi", "romantic", "sad", "party", "old", "lofi", "h
 _PLAY_BARE = re.compile(r"^(?:play|bajao|sunao) (?P<q>.{3,})$", re.I)
 _NOT_A_SONG = re.compile(r"\b(?:video|videos|youtube|channel|tab|it|this|that|next|previous|again|movie|film|trailer|"
                          r"episode|game|match|result|one|first|second|third|last|from|at|speed|"
-                         r"latest|newest)\b", re.I)
+                         r"latest|newest|joke|jokes|story|riddle|poem|shayari)\b", re.I)  # "play me a joke" played a song
 
 
 _SPLIT = re.compile(r"\s*,\s*(?:and |then |and then )?|\s+(?:and then|and also|and|then|after that|aur phir|aur fir|aur|phir|fir)\s+", re.I)

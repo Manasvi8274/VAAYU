@@ -44,6 +44,17 @@ def text_after_name(text: str) -> str:
     return text[last.end():].strip() if last else text.strip()
 
 
+def command_part(text: str) -> str:
+    """The command in a sentence with Vaayu's name in it: what came after the name, or - when the name came
+    last - what came before it, if that's short (real log: "Not able to hear the song Vaayu." was taken as a
+    bare "Vaayu" and ignored). '' if it's only the name."""
+    rest = text_after_name(text)
+    if has_command_content(rest):
+        return rest
+    before = _NAME_WORD_RE.sub(" ", text).strip(" ,.!?")
+    return before if has_command_content(before) and len(before.split()) <= 12 else ""
+
+
 def is_wake_command(text: str) -> bool:
     normalized = _normalize(text)
     return _name_present(normalized) and "wake" in normalized
@@ -60,7 +71,7 @@ def is_shutdown_command(text: str) -> bool:
     return _name_present(normalized) and has_shutdown
 
 
-_WAKE_FILLER_WORDS = {"wake", "up", "vaayu", "vayu", "hey", "hi", "hello"}
+_WAKE_FILLER_WORDS = {"wake", "up", "vaayu", "vayu", "hey", "hi", "hello", "ok", "okay", "key"}
 
 
 def is_name_mentioned(text: str) -> bool:

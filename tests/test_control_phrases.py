@@ -100,3 +100,11 @@ def test_is_affirmative_unrelated_speech_is_not_a_yes():
     # only recognizably affirmative words should count.
     assert is_affirmative("what time is it") is False
     assert is_affirmative("umm") is False
+
+
+def test_a_command_before_the_name_is_still_a_command():
+    # Real log: "Not able to hear the song Vaayu." was taken as a bare "Vaayu" and ignored.
+    from assistant.control_phrases import command_part
+    assert command_part("Not able to hear the song vaayu.") == "Not able to hear the song"
+    assert command_part("Hey vaayu.") == "" and command_part("Key Vaayu.") == ""
+    assert command_part("long video talk. Vaayu, pause the video") == "pause the video"
