@@ -313,3 +313,35 @@ def test_why_you_before_a_command_is_vaayu(text, after):
 def test_real_why_you_questions_stay_questions(text):
     from assistant.control_phrases import is_name_mentioned
     assert not is_name_mentioned(text)
+
+
+@pytest.mark.parametrize("text, last_reply, expected", [  # real log 2026-10-25
+    ("Lower down the songs volume to 30 percent.", "", [("music_control", {"action": "volume_set", "level": 30})]),
+    ("Reduce it to 20 percent.", "Music volume is now 70%.", [("music_control", {"action": "volume_set", "level": 20})]),
+    ("Reduce it to 20 percent.", "Laptop volume is now 100%.", [("control_media", {"action": "volume_set", "level": 20})]),
+    ("Not the laptop volume but the song volume.", "Laptop volume is now 30%.",
+     [("music_control", {"action": "volume_set", "level": 30})]),
+    ("Not the music volume but laptop speaker volume.", "Music volume is now 50%.",
+     [("control_media", {"action": "volume_set", "level": 50})]),
+    ("increase the laptop volume to 80 percent but reduce the som volume to 20 percent.", "",
+     [("control_media", {"action": "volume_set", "level": 80}), ("music_control", {"action": "volume_set", "level": 20})]),
+    ("Hey why you play the song bang bang.", "", [("play_music", {"query": "bang bang"})]),  # "why you" = "Vaayu"
+    ("Why you play a good rittak roshan hindi song.", "", [("play_music", {"query": "good rittak roshan hindi"})]),
+])
+def test_days_volume_and_song_commands(text, last_reply, expected):
+    assert router.fast_route(text, last_reply) == ("tools", expected)
+
+
+@pytest.mark.parametrize("text", ["Play the song named.", "Just play the bollywood song named."])
+def test_a_cut_off_song_name_is_asked_for_not_guessed(text):  # real log: "named" played 'Ramayana: Mangal Rang'
+    assert router.fast_route(text)[0] == "reply"
+
+
+def test_brain_hands_the_router_its_last_reply():
+    brain = OllamaBrain.__new__(OllamaBrain)
+    brain.fast_paths, brain.trace = True, []
+    with patch.object(router, "fast_route", return_value=("reply", "ok")) as fr:
+        brain.respond([{"role": "user", "content": "Reduce the song volume."},
+                       {"role": "assistant", "content": "Music volume is now 70%."},
+                       {"role": "user", "content": "Reduce it to 20 percent."}], registry, lambda *a: True)
+    fr.assert_called_once_with("Reduce it to 20 percent.", "Music volume is now 70%.")

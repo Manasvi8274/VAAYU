@@ -148,3 +148,15 @@ def test_his_own_garbled_voice_never_cuts_him_off(heard):
 def test_his_name_always_cuts_him_off():
     from assistant.audio.barge_in import should_interrupt
     assert should_interrupt("Vaayu listen", "Here is a long answer about the weather.")
+
+
+@pytest.mark.parametrize("heard, speaking, interrupts", [  # real log 2026-10-25: his own garbled echo cut him off
+    ("Playing shawnt men's.", "Playing Shawn Mendes, Camila Cabello - Señorita by Shawn Mendes.", False),
+    ("Pause the.", "Paused the song.", False),
+    ("Sorry so.", "Sorry, something went wrong there and I don't have a real answer - please try that again.", False),
+    ("Long walk.", "It seems like you're asking for a song, but the request isn't clear.", False),
+    ("What's up vaayu.", "Sure thing! What can I help with today?", True),  # the user's own - it ran next turn
+])
+def test_his_garbled_echo_doesnt_cut_him_off(heard, speaking, interrupts):
+    from assistant.audio.barge_in import should_interrupt
+    assert should_interrupt(heard, speaking) is interrupts

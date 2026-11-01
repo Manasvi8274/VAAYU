@@ -30,8 +30,10 @@ from assistant.tools.registry import ToolRegistry
 _LEAD = re.compile(
     r"^(?:(?:hey|ok|okay|so|and|um+|uh+|hmm+|hold on|let's|lets|vaa?yu|please|pls|can you|could you|would you|"
     r"will you|zara|just)\s+)*", re.I)
-# Whisper adds a stray "You" before a command (real log: "You open youtube." -> 15 s LLM detour, failed).
-_STRAY_YOU = re.compile(r"^you\s+(?=(?:open|close|play|pause|resume|stop|mute|unmute|search|show|turn|set|skip|go|take|lock|send|type)\b)", re.I)
+# Whisper adds a stray "You" before a command (real log: "You open youtube." -> 15 s LLM detour, failed), or
+# writes "Vaayu" as "why you" (real log: "Hey why you play the song bang bang" -> 28 s LLM, played nothing).
+_STRAY_YOU = re.compile(r"^(?:(?:why|wai|vai|whai) )?you\s+(?=(?:open|close|play|pause|resume|stop|mute|unmute|search|show|"
+                        r"turn|set|skip|go|take|lock|send|type|lower|reduce|increase|raise)\b)", re.I)
 _TAIL = re.compile(r"(?:\s+(?:please|pls|for me|na|yaar|now|right now|bhai|jaldi|quickly|a bit|a little|"
                    r"jaldi se|vaa?yu|for a (?:second|sec|moment|minute|bit)|for now|real quick))+$", re.I)
 _FILLER_WORDS = re.compile(r"\b(?:um+|uh+|hmm+|erm|thoda|zara)\b", re.I)
@@ -78,14 +80,15 @@ _MEDIA = [
 ]
 _MEDIA = [(re.compile(rf"^(?:{p})$", re.I), a) for p, a in _MEDIA]
 # "Volume" is the laptop's speakers (user, 2026-10-25); only a volume that names the song/music is the player's.
-_SONG_VOLUME = re.compile(r"(?<!not )(?<!not the )\b(?:song|music|gaana|gaane|gaane ki|track)(?:'s)? (?:volume|awaa?z|sound)\b|"
+# Real log: "Lower down the songs volume to 30 percent" set the laptop's; "som volume" is Whisper's "song volume".
+_SONG_VOLUME = re.compile(r"(?<!not )(?<!not the )\b(?:song|songs|som|music|gaana|gaane|gaane ki|track)(?:'s)? (?:volume|awaa?z|sound)\b|"
                           r"\bvolume of (?:the |this )?(?:song|music|track)\b", re.I)
 # Real log: "Lower down the system volume to 50 percent laptop volume not the song volume" - the speakers win.
 _SPEAKER_WORDS = re.compile(r"\b(?:system|laptop|laptop's|speaker|speakers|computer|pc)\b", re.I)
 _SONG_VOLUME_STEP = re.compile(
-    r"^(?:(?:turn|make|put) )?(?:the )?(?:song|music|gaana|gaane ki|track)(?:'s)? (?:volume|awaa?z|sound) "
+    r"^(?:(?:turn|make|put) )?(?:the )?(?:song|songs|music|gaana|gaane ki|track)(?:'s)? (?:volume|awaa?z|sound) "
     r"(?:(?P<up>up|badhao|badha do|increase|louder|tez karo)|(?:down|kam karo|kam kar do|decrease|lower|quieter|dheere karo))$|"
-    r"^(?:(?P<up2>increase|raise|turn up)|decrease|lower|reduce|turn down)(?: the)? (?:song|music|track)(?:'s)? (?:volume|sound)$",
+    r"^(?:(?P<up2>increase|raise|turn up)|decrease|lower|reduce|turn down)(?: the)? (?:song|songs|music|track)(?:'s)? (?:volume|sound)$",
     re.I)
 # Speaker-player audio (tools/music.py) in looser words; "post"/"pose" = how Whisper writes "pause".
 _AUDIO_CTRL = re.compile(r"^(?P<a>pause|post|pose|stop|hold|close|end|resume|start|continue|unpause)"
@@ -695,7 +698,6 @@ def _route_making(t: str):
     return ("tool", routed[0], {k: v for k, v in routed[1].items() if v != "" or k in ("description", "goal", "task")})
 
 # From the 10-26..10-31 logs: phrases that went to the slow model (11-44 s), or did the wrong thing.
-_WHY_PLAY = re.compile(r"^(?:hey |okay |ok )?(?:why|wai|vai) (?:don'?t )?(?:you|u) play(?: me)? (?P<q>.+)$", re.I)  # "will you play"
 _HOLD = re.compile(r"^(?:hold|pause|stop)(?: the| this| that)? (?:sound|audio|music|song|gaana)$|"
                    r"^(?:pause|hold) (?:that|this|it)$", re.I)  # real log: "Hold the sound." - said paused, wasn't
 _CANT_HEAR = re.compile(r"^(?:i'?m |i am |i )?(?:not able to|can'?t|cannot|unable to) (?:hear|listen to)(?: the)? "
@@ -712,8 +714,6 @@ _TITLE_BY = re.compile(r"^(?P<q>[\w' ]{2,40}?) (?:by|from) (?P<a>[\w' ]{2,30})$"
 
 
 def _route_log_fixes(t: str):
-    if m := _WHY_PLAY.match(t):
-        return ("tool", "play_music", {"query": m.group("q").strip(" .")})
     if _HOLD.match(t):
         return ("tool", "control_media", {"action": "pause"})
     if _CANT_HEAR.match(t):
@@ -977,14 +977,48 @@ _NOT_A_SONG = re.compile(r"\b(?:video|videos|youtube|channel|tab|it|this|that|ne
                          r"latest|newest|joke|jokes|story|riddle|poem|shayari)\b", re.I)  # "play me a joke" played a song
 
 
-_SPLIT = re.compile(r"\s*,\s*(?:and |then |and then )?|\s+(?:and then|and also|and|then|after that|aur phir|aur fir|aur|phir|fir)\s+", re.I)
+# "but": real log "increase the laptop volume to 80 percent but reduce the som volume to 20 percent" (39 s LLM, wrong)
+_SPLIT = re.compile(r"\s*,\s*(?:and |then |and then )?|\s+(?:and then|and also|and|then|after that|but|aur phir|aur fir|aur|phir|fir)\s+", re.I)
+# A volume just set (format_result's reply) and the follow-ups that refer to it.
+_LAST_VOLUME = re.compile(r"^(?P<who>Music|Laptop) volume is now (?P<n>\d+)%")
+_VOLUME_FIX = re.compile(r"^not\b.*\bvolume\b.*\bbut\b", re.I)
+# The song's name cut off (real log: "Play the song named." played 'Ramayana: Mangal Rang').
+_NO_NAME = re.compile(r"(?:^|\s)(?:named|called|name is)$", re.I)
 
 
-def fast_route(text: str):
+def _volume_follow_up(t: str, last_reply: str):
+    """Real log, right after "Music volume is now 70%.": "Reduce it to 20 percent" set the LAPTOP's; and after
+    "Laptop volume is now 30%.": "Not the laptop volume but the song volume" set the laptop's again."""
+    m = _LAST_VOLUME.match(last_reply or "")
+    if not m:
+        return None
+    music, level = m.group("who") == "Music", int(m.group("n"))
+    if _VOLUME_FIX.match(t):  # the same level, on the other one
+        music = not music
+    elif b := _BARE_LEVEL.match(t):  # the one just changed
+        level = int(b.group("n"))
+    else:
+        return None
+    return ("tools", [("music_control" if music else "control_media",
+                       {"action": "volume_set", "level": min(level, 100)})])
+
+
+def fast_route(text: str, last_reply: str = ""):
     """("reply", text) / ("tools", [(name, args), ...]) for an unambiguous
     command, or None to fall back to the LLM. Deliberately conservative:
-    a miss only costs LLM latency, a wrong hit does the wrong thing."""
+    a miss only costs LLM latency, a wrong hit does the wrong thing.
+    last_reply: Vaayu's previous reply ("Music volume is now 70%." makes "reduce it to 20" the song's)."""
+    routed = _fast_route(text, last_reply)
+    if routed and routed[0] == "tools" and any(n == "play_music" and _NO_NAME.search(a.get("query", ""))
+                                               for n, a in routed[1]):
+        return ("reply", "I didn't catch the song's name - say 'play' and the name.")
+    return routed
+
+
+def _fast_route(text: str, last_reply: str):
     t = normalize(text)
+    if follow := _volume_follow_up(t, last_reply):
+        return follow
     # A whole-utterance WhatsApp send is checked before the refusals, so a
     # message that merely mentions e.g. "call" or "email" still goes out.
     if (one := _route_one(t)) and one[0] == "tool" and one[1] == "send_whatsapp_message":

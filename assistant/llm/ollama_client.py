@@ -386,7 +386,8 @@ class OllamaBrain:
         self._user_text = last_user_text  # for _dispatch's song -> speakers rule
 
         if self.fast_paths:
-            routed = router.fast_route(last_user_text)
+            last_reply = next((m.get("content") or "" for m in reversed(messages[:-1]) if m.get("role") == "assistant"), "")
+            routed = router.fast_route(last_user_text, last_reply)
             if routed and routed[0] == "reply":
                 self.trace.append({"path": "fast_reply"})
                 return routed[1], messages + [{"role": "assistant", "content": routed[1]}]

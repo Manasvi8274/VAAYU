@@ -249,7 +249,7 @@ def test_song_phrases_that_went_to_the_slow_model(said, action):
 
 
 @pytest.mark.parametrize("said, want", [
-    ("Hey why you play band band bollywood music.", ("play_music", {"query": "band band bollywood music"})),
+    ("Hey why you play band band bollywood music.", ("play_music", {"query": "band band bollywood"})),
     ("Hold the sound.", ("control_media", {"action": "pause"})),          # real log: said paused, wasn't
     ("Hey vaayu pause that.", ("control_media", {"action": "pause"})),
     ("I'm not able to listen to the song.", ("music_control", {"action": "cant_hear"})),
