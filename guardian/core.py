@@ -318,7 +318,9 @@ def _ensure_ollama() -> None:
     if not exe.exists():
         log.warning("Ollama isn't running and %s isn't there - Vaayu will have no brain", exe)
         return
-    subprocess.Popen([str(exe), "serve"], env=dict(os.environ, OLLAMA_MODELS=str(REPO / "models" / "ollama")),
+    # two cache slots: the tool prompt and the chat prompt each stay read (assistant/llm/ollama_client.py BRAIN_CTX)
+    subprocess.Popen([str(exe), "serve"], env=dict(os.environ, OLLAMA_MODELS=str(REPO / "models" / "ollama"),
+                                                   OLLAMA_NUM_PARALLEL="2"),
                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                      creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     log.info("started Ollama's server (models in %s)", REPO / "models" / "ollama")

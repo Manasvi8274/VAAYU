@@ -596,6 +596,8 @@ class Orchestrator:
         mcp_tools.ANNOUNCE = self._speak  # "On it - give me a minute" before a design or a deep think
         from assistant import research
         research.start(self.config, self.brain.client)  # reads about their topics while idle
+        if hasattr(self.brain, "warm_up"):
+            threading.Thread(target=self.brain.warm_up, daemon=True, name="brain-warm-up").start()
         if self.continuous:
             self.listener.start()
             print(

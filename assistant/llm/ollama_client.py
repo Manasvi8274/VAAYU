@@ -79,6 +79,11 @@ _KEEP_ALIVE = -1
 # headroom; not set arbitrarily high since a larger context window also
 # costs more compute per call on this CPU-only setup.
 _NUM_CTX = 8192
+# Every call to the brain uses this one context size (2026-11-04, measured): Ollama RELOADS the model whenever it
+# changes - chat (4096), tools (8192), phrasing (2048) cost 3.7-4.6 s of reload at every switch. And a prompt
+# whose start was read last time is re-read in 0.1-0.2 s instead of 15 s (2,730 tokens at 185 tok/s on the
+# GTX 1650) - so the phrasing call starts with the tool prompt, and Ollama keeps two cache slots (tools, chat).
+BRAIN_CTX = _NUM_CTX
 
 # Qwen3.5 reasons in a <think> block before every reply by default - several
 # seconds of dead air per step in a voice assistant. Qwen3.5 dropped Qwen3's
@@ -311,18 +316,19 @@ class OllamaBrain:
         """One small, tool-free LLM call that turns a data result (wifi
         details, mic level...) into a spoken sentence."""
         self.trace.append({"path": "llm_call", "purpose": "phrase_result", "tool": name})
+        from assistant.llm.prompts import SYSTEM_PROMPT
         response = self.client.chat(
             model=self.model,
             messages=[
-                {"role": "system", "content": "Answer the user's question in one or two short spoken sentences "
-                                              "using only this tool result - state the answer directly. No markdown. "
-                                              "Reply in the same language as the question: English, or Hinglish "
-                                              "written in Roman letters." + _now_line()},
-                {"role": "user", "content": f"Question: {user_text}\nResult of {name}: {result}"},
+                {"role": "system", "content": SYSTEM_PROMPT + _now_line()},  # the tool prompt: already read, cached
+                {"role": "user", "content": f"Question: {user_text}\nResult of {name}: {result}\n\nAnswer the "
+                                            "question in one or two short spoken sentences using only this result - "
+                                            "state the answer directly. No markdown, no tool calls. Reply in the same "
+                                            "language as the question: English, or Hinglish written in Roman letters."},
             ],
             keep_alive=_KEEP_ALIVE,
             think=_THINK,
-            options={"num_ctx": 2048, "num_predict": _MAX_REPLY_TOKENS, "temperature": _TOOL_TEMPERATURE},
+            options={"num_ctx": BRAIN_CTX, "num_predict": _MAX_REPLY_TOKENS, "temperature": _TOOL_TEMPERATURE},
         )
         reply = _sanitize_reply(response["message"].get("content", ""))
         return _romanize(reply) if _DEVANAGARI.search(reply) else reply  # live: "Droupadi Murmu India ka 15वीं राष्ट्रपति"
@@ -373,7 +379,8 @@ class OllamaBrain:
                 messages=convo,
                 keep_alive=_KEEP_ALIVE,
                 think=_THINK,
-                options={"num_ctx": 4096, "num_predict": 200, "temperature": _CHAT_TEMPERATURE if attempt == 0 else 0.3},
+                options={"num_ctx": BRAIN_CTX, "num_predict": 200,
+                         "temperature": _CHAT_TEMPERATURE if attempt == 0 else 0.3},
             )
             reply = _sanitize_reply(response["message"].get("content", ""), max_sentences=4)
             if not _DEVANAGARI.search(reply) and len(_HINDI_WORDS.findall(reply)) < 3:
@@ -386,6 +393,19 @@ class OllamaBrain:
         if _DEVANAGARI.search(reply):
             reply = _romanize(reply)
         return reply, messages + [{"role": "assistant", "content": reply}]
+
+    def warm_up(self) -> None:
+        """Read the tool prompt and the chat prompt once, so the first real question isn't 15-25 s (measured: a cold
+        tool call 26.8 s, a warm one 3.4 s, a warm chat 1.0 s)."""
+        from assistant.llm.prompts import SYSTEM_PROMPT
+        for system in (SYSTEM_PROMPT + _now_line(), BROTHER_PROMPT + _now_line()):
+            try:
+                self.client.chat(model=self.model, messages=[{"role": "system", "content": system},
+                                                             {"role": "user", "content": "hi"}],
+                                 keep_alive=_KEEP_ALIVE, think=_THINK,
+                                 options={"num_ctx": BRAIN_CTX, "num_predict": 1, "temperature": 0})
+            except Exception:
+                return  # Ollama not up yet - the first question just reads them itself
 
     def respond(
         self,
@@ -433,6 +453,11 @@ class OllamaBrain:
                 return routed[1], messages + [{"role": "assistant", "content": routed[1]}]
             if routed and all(name in tool_registry._tools for name, _args in routed[1]):
                 replies = []
+                unique = []  # the same step once - "how much battery and is it charging" read it out twice
+                for step in routed[1]:
+                    if step not in unique:
+                        unique.append(step)
+                routed = (routed[0], unique)
                 for name, arguments in routed[1]:  # multi-step: in order, stop at the first failure
                     if why := tool_registry.refusal_before_asking(name, arguments):
                         self.trace.append({"path": "fast", "tool": name, "args": arguments, "refused": why})

@@ -140,7 +140,7 @@ def research(topic: str, client, model: str, still_idle=lambda: True) -> dict | 
                   {"role": "user", "content": f"Topic: {topic}\n\nText:\n{text}"}],
         keep_alive=-1,
         think=False,
-        options={"num_ctx": 4096, "num_predict": 180, "temperature": 0.2},  # chat's context size: no model reload
+        options={"num_ctx": 8192, "num_predict": 180, "temperature": 0.2},  # the brain's size: no reload (BRAIN_CTX)
     )
     summary = (response["message"].get("content") or "").strip()
     if not summary or summary.upper().startswith("NOTHING") or len(summary) < 40:
