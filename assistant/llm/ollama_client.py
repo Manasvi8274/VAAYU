@@ -141,8 +141,10 @@ _HINDI_WORDS = re.compile(r"\b(?:hai|hain|kya|aap|aapko|ko|ka|ki|ke|mein|nahi|ka
 # ("tell me a joke" -> "what's your name?"); qwen3.5:4b writes proper Hindi in 4-7 s. A Hindi chat goes to it
 # (a model switch on the 4 GB GPU costs ~10 s the first time).
 HINDI_MODEL = "qwen3.5:4b-q4_K_M"  # calibration knob
+_ENGLISH_ONLY = re.compile(r"- Always reply in clear, simple English.*?(?=\n- |\Z)", re.S)
 _HINDI_RULE = ("The user spoke Hindi: reply in simple, natural spoken Hindi in Devanagari script, like an elder "
-               "brother (bhai) - warm, at most 3 short sentences, no English sentences, no emojis.")
+               "brother (bhai) - warm, at most 3 short sentences, no English sentences, no emojis. Call them bhai, "
+               "never beta or son.")
 _DEVANAGARI = re.compile(r"[ऀ-ॿ]")
 # Few-shot turns: told only in words, the 3B model answered Hinglish in Devanagari. Its Roman
 # Hinglish was tested too (and after training on Claude-written Hinglish): fluent-sounding but
@@ -155,6 +157,26 @@ _CHAT_EXAMPLES = [
     {"role": "assistant", "content": "Then make it too small to skip - ten minutes, same time every day. Once it's a "
                                      "habit you can make it longer. Consistency beats intensity."},
 ]
+
+
+_ENGLISH_WORDS = re.compile(r"\b(?:the|a|an|is|are|was|to|of|and|in|on|for|it|this|that|you|your|i|my|me|we|what|"
+                            r"how|why|when|where|can|could|will|would|do|does|did|play|open|close|please|with|"
+                            r"about|from|not|no|yes|be|have|has|so|but|if|just|tell|want|need)\b", re.I)
+_MORE_HINDI = re.compile(r"\b(?:aur|hoon|hun|hu|aaj|kal|bahut|bohot|mera|meri|tera|teri|tum|tu|kyun|kyu|kab|kahan|"
+                         r"kaun|haan|nahin|mujhe|tumhe|batao|bata|bolo|chalo|dekho|samjha|matlab|lekin|par)\b", re.I)
+
+
+def is_hindi(text: str) -> bool:
+    """Spoken Hindi, whatever the script. The speech model writes Hindi speech as Roman Hindi ("aaj mausam bohot
+    achha hai" - measured on Kokoro's Hindi voice); a sentence that's mostly Hindi words, with hardly any English
+    ones, is Hindi. Hinglish with English in it ("play the song na") stays English."""
+    if _DEVANAGARI.search(text or ""):
+        return True
+    words = re.findall(r"[a-z']+", (text or "").lower())
+    if len(words) < 3:
+        return False
+    hindi = len(_HINDI_WORDS.findall(text)) + len(_MORE_HINDI.findall(text))
+    return hindi >= 2 and hindi / len(words) >= 0.3 and len(_ENGLISH_WORDS.findall(text)) <= len(words) * 0.15
 
 
 def _romanize(text: str) -> str:
@@ -332,11 +354,13 @@ class OllamaBrain:
         history = []
         for turn in memory.recent_turns(_CHAT_TURNS):
             history += [{"role": "user", "content": turn["user"]}, {"role": "assistant", "content": turn["reply"]}]
-        if _DEVANAGARI.search(user_text):  # spoken Hindi: answered in Hindi, said by the Hindi voice
+        if is_hindi(user_text):  # spoken Hindi: answered in Hindi, said by the Hindi voice
             response = self.client.chat(
                 model=HINDI_MODEL, keep_alive=_KEEP_ALIVE, think=False,
-                messages=[{"role": "system", "content": system + "\n" + _HINDI_RULE}, *history,
-                          {"role": "user", "content": user_text}],
+                # the persona's own "always reply in English" line is dropped - live, it won, in Roman letters
+                messages=[{"role": "system", "content": _ENGLISH_ONLY.sub("", system) + "\n" + _HINDI_RULE},
+                          *history, {"role": "user", "content": user_text},
+                          {"role": "system", "content": "Reply in Hindi, written in Devanagari script (हिन्दी)."}],
                 options={"num_ctx": 4096, "num_predict": 220, "temperature": 0.5},
             )
             reply = _sanitize_reply(response["message"].get("content", ""), max_sentences=4)

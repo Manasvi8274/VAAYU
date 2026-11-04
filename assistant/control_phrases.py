@@ -13,7 +13,7 @@ from enum import Enum
 
 
 def _normalize(text: str) -> str:
-    return re.sub(r"[^\w\s]", "", text.lower())
+    return re.sub(r"[^\w\sऀ-ॿ]", "", text.lower())  # Hindi's vowel marks aren't \w - keep them
 
 
 def _name_present(normalized: str) -> bool:
@@ -113,10 +113,12 @@ def detect_control_command(text: str) -> ControlCommand:
 _AFFIRMATIVE_WORDS = {
     "yes", "yeah", "yep", "yup", "sure", "ok", "okay", "confirm", "confirmed",
     "correct", "right", "affirmative", "please", "go",
+    "haan", "han", "haa", "ji", "theek", "thik", "bhejo", "हाँ", "हां", "हा", "जी", "ठीक", "भेजो", "भेज",
 }
 _AFFIRMATIVE_PHRASES = ("go ahead", "do it", "send it", "sounds good")
 _NEGATIVE_WORDS = {
     "no", "nope", "nah", "dont", "stop", "cancel", "wait", "negative", "never", "not",
+    "nahi", "nahin", "mat", "ruko", "नहीं", "नही", "मत", "रुको",
 }
 
 

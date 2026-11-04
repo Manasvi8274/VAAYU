@@ -176,6 +176,17 @@ def test_devanagari_chat_reply_is_retried_then_romanized():
         brain = OllamaBrain(host="http://fake", model="m")
     brain.client = MagicMock()
     brain.client.chat.return_value = {"message": {"role": "assistant", "content": "ठीक है भाई, चिंता मत कर।"}}
-    reply, _ = brain._chat([], "bhai tension ho rahi hai")
+    reply, _ = brain._chat([], "I am feeling a bit stressed about work")  # English asked: English answered
     assert brain.client.chat.call_count == 2  # one retry asking for Roman letters
     assert not ollama_client._DEVANAGARI.search(reply) and reply.startswith("thik hai bhai")
+
+
+def test_hindi_said_gets_a_hindi_reply_from_the_hindi_model():
+    # User (2026-11-04): "I want Vaayu to speak in Hindi also" - spoken as Roman Hindi by the speech model.
+    with patch("assistant.llm.ollama_client.ollama.Client"):
+        brain = OllamaBrain(host="http://fake", model="m")
+    brain.client = MagicMock()
+    brain.client.chat.return_value = {"message": {"role": "assistant", "content": "ठीक है भाई, चिंता मत कर।"}}
+    reply, _ = brain._chat([], "bhai tension ho rahi hai")
+    assert reply == "ठीक है भाई, चिंता मत कर।" and brain.client.chat.call_count == 1
+    assert brain.client.chat.call_args.kwargs["model"] == ollama_client.HINDI_MODEL
