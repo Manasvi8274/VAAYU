@@ -29,3 +29,38 @@ def test_the_same_step_is_done_once():
                                                                      ("get_system_status", {})])):
         brain.respond([{"role": "user", "content": "battery and is it charging"}], fake, lambda *a: True)
     assert fake.dispatch.call_count == 1
+
+
+def test_a_slow_turn_is_acknowledged_once_and_a_fast_one_never(monkeypatch):
+    # User (2026-11-04): output within 2-3 s, never more.
+    import time
+    from unittest.mock import MagicMock
+    from assistant import orchestrator
+    monkeypatch.setattr(orchestrator, "ACK_AFTER", 0.05)
+    o = orchestrator.Orchestrator.__new__(orchestrator.Orchestrator)
+    said = []
+    o._speak_now = lambda text: said.append(text) or False
+    o._turn_done, o._last_spoke = False, 0
+    started = time.time()
+    o._ack_if_slow("open notepad and type hello world", started)
+    assert said == ["On it: opening notepad, then typing it."]
+    o._ack_if_slow("open notepad", started)  # something was already said this turn: no second ack
+    assert len(said) == 1
+    o._turn_done = True
+    o._ack_if_slow("tell me a joke", time.time() + 1)
+    assert len(said) == 1
+
+
+def test_ack_words():
+    from assistant.orchestrator import ack_for
+    assert ack_for("play kesariya and set volume to 40") == "On it: playing kesariya, then volume to 40."
+    assert ack_for("kya haal hai bhai") == "एक सेकंड भाई।"
+    assert ack_for("tell me about black holes", 1) == "One second."
+
+
+def test_shortcuts_work_alone_and_as_steps():
+    from assistant.llm import router
+    assert router.fast_route("open notepad then type hello world and save it") == ("tools", [
+        ("open_app", {"app_name": "notepad"}), ("type_text", {"text": "hello world"}), ("press_hotkey", {"keys": "ctrl+s"})])
+    assert router.fast_route("undo") == ("tools", [("press_hotkey", {"keys": "ctrl+z"})])
+    assert router.fast_route("save the trees campaign is great") is None

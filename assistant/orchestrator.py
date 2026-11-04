@@ -186,7 +186,43 @@ def _media_playing() -> bool:
         return False
 
 
-_COMMON_REPLIES = ["Yes? I'm listening.", "Yes?", "Okay.", "Playing.", "Paused.", "Okay, no problem.", "You're welcome!",
+# User (2026-11-04): "the output time avg should be 2-3 sec, never greater". Some work takes longer on this laptop
+# (a web lookup, a multi-step job, a long answer) - so if nothing has been said ACK_AFTER seconds into a turn,
+# Vaayu says what he's doing, and the result follows.
+ACK_AFTER = 1.5  # calibration knob (seconds)
+_ACKS = ["On it.", "One second.", "Ek second, bhai.", "Checking."]
+_STEP_WORDS = {"open_app": "opening {app_name}", "close_app": "closing {app_name}", "play_music": "playing {query}",
+               "type_text": "typing it", "get_weather": "checking the weather", "get_system_status": "checking the laptop",
+               "open_website": "opening {url_or_query}", "take_screenshot": "taking a screenshot",
+               "control_media": "{action}", "press_hotkey": "pressing {keys}", "answer_question": "looking it up",
+               "play_video_on_youtube": "finding the video", "send_whatsapp_message": "the message"}
+
+
+_MEDIA_WORDS = {"volume_set": "volume to {level}", "volume_up": "volume up", "volume_down": "volume down",
+                "pause": "pausing", "play": "playing", "next": "next track", "mute": "muting", "unmute": "unmuting"}
+
+
+def ack_for(text: str, n: int = 0) -> str:
+    """What to say while a slow turn works: the steps of a multi-step command, else a short "On it."."""
+    from assistant.llm import router
+    try:
+        routed = router.fast_route(text)
+    except Exception:
+        routed = None
+    if routed and routed[0] == "tools" and len(routed[1]) > 1:
+        steps = []
+        for name, args in routed[1][:3]:
+            try:
+                said = _STEP_WORDS.get(name, "on it").format(**args)
+                steps.append(_MEDIA_WORDS.get(said, said).format(**args))
+            except (KeyError, IndexError):
+                steps.append("on it")
+        return "On it: " + ", then ".join(steps) + "."
+    from assistant.llm.ollama_client import is_hindi
+    return "एक सेकंड भाई।" if is_hindi(text) else _ACKS[n % 2]
+
+
+_COMMON_REPLIES = _ACKS + ["Yes? I'm listening.", "Yes?", "Okay.", "Playing.", "Paused.", "Okay, no problem.", "You're welcome!",
                    "Opened Brave.", "Opened WhatsApp.", "Sorry, I didn't get that - could you say it again?"]
 
 
@@ -310,8 +346,16 @@ class Orchestrator:
     def _speak(self, text: str) -> bool:
         """Speaks; True if the user cut it off with "stop" (audio/barge_in.py) - Vaayu then
         just goes back to listening. One voice at a time: alarms speak from their own thread."""
+        self._last_spoke = time.time()
         with _SPEAK_LOCK:
             return self._speak_now(text)
+
+    def _ack_if_slow(self, text: str, started: float) -> None:
+        """ACK_AFTER seconds in and nothing said yet (no reply, no confirm question): say what's happening."""
+        if getattr(self, "_last_spoke", 0) < started and not getattr(self, "_turn_done", True):
+            self._acks = getattr(self, "_acks", 0) + 1
+            interaction_log.log_event("ack", text=text)
+            self._speak(ack_for(text, self._acks))
 
     def _speak_now(self, text: str) -> bool:
         stop, barge = threading.Event(), None
@@ -552,6 +596,10 @@ class Orchestrator:
         self.messages.append({"role": "user", "content": text})
         self.brain.trace = []
         error = None
+        started, self._turn_done = time.time(), False
+        ack = threading.Timer(ACK_AFTER, self._ack_if_slow, args=(text, started))
+        ack.daemon = True
+        ack.start()
         with Timer() as brain_time:
             try:
                 try:
@@ -565,6 +613,8 @@ class Orchestrator:
                 issue_log.log_issue(user_said=text, tool_name=None, error=f"brain.respond failed: {exc!r}", kind="respond_crash")
                 interaction_log.log_error("brain.respond", exc, text=text)
                 reply = "Sorry, that took too long or went wrong - please try again."
+        self._turn_done = True
+        ack.cancel()
         self.messages = _trim_history(self.messages)
         # Remember the talk (data/conversations.jsonl), and learn lasting facts
         # from personal conversation - here, not in brain.respond, so only real

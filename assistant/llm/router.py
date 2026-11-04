@@ -718,7 +718,22 @@ _BRIEFING = re.compile(r"^(?:good morning|morning|gm|suprabhat|good (?:afternoon
                        r"^(?:give me )?(?:my |the )?(?:morning |daily )?briefing$|^aaj ka (?:kya )?plan (?:kya )?hai$", re.I)
 
 
+# Everyday shortcuts, so they work on their own and as a step ("open notepad, type hello and save it" was
+# wholly sent to the slow model because "save it" alone wasn't known).
+_SHORTCUTS = [(re.compile(p, re.I), keys) for p, keys in [
+    (r"^save(?: it| this| that| the file| the document)?$|^(?:file )?save karo$", "ctrl+s"),
+    (r"^select (?:all|everything)(?: the text)?$|^sab select karo$", "ctrl+a"),
+    (r"^copy(?: it| this| that| the text)?$", "ctrl+c"), (r"^paste(?: it| this| that| here)?$", "ctrl+v"),
+    (r"^cut(?: it| this| that)$", "ctrl+x"), (r"^undo(?: it| this| that)?$", "ctrl+z"), (r"^redo(?: it| that)?$", "ctrl+y"),
+    (r"^(?:open )?(?:a )?new tab$", "ctrl+t"), (r"^close (?:this|the) (?:window|app)$", "alt+f4"),
+    (r"^refresh(?: the page| it| this)?$|^reload(?: the page| it)?$", "f5"),
+]]
+
+
 def _route_log_fixes(t: str):
+    for pattern, keys in _SHORTCUTS:
+        if pattern.match(t):
+            return ("tool", "press_hotkey", {"keys": keys})
     if _BRIEFING.match(t):
         return ("tool", "daily_briefing", {})
     if _HOLD.match(t):
