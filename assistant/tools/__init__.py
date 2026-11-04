@@ -4,6 +4,7 @@ from assistant.tools import (  # noqa: F401
     alarm_tools,
     apps,
     audio_status,
+    briefing,
     browser,
     browser_automation,
     devices,

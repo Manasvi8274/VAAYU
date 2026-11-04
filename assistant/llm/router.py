@@ -713,7 +713,14 @@ _RECOMMEND_SONGS = re.compile(r"^(?:can you |could you |please )?(?:recommend|su
 _TITLE_BY = re.compile(r"^(?P<q>[\w' ]{2,40}?) (?:by|from) (?P<a>[\w' ]{2,30})$", re.I)  # "Believer from Imagine Dragons"
 
 
+_BRIEFING = re.compile(r"^(?:good morning|morning|gm|suprabhat|good (?:afternoon|evening))(?: vaa?yu| bhai)?$|"
+                       r"^(?:what'?s|what is) (?:my day|on my plate|my day like)(?: today)?$|^brief me$|"
+                       r"^(?:give me )?(?:my |the )?(?:morning |daily )?briefing$|^aaj ka (?:kya )?plan (?:kya )?hai$", re.I)
+
+
 def _route_log_fixes(t: str):
+    if _BRIEFING.match(t):
+        return ("tool", "daily_briefing", {})
     if _HOLD.match(t):
         return ("tool", "control_media", {"action": "pause"})
     if _CANT_HEAR.match(t):
@@ -1241,7 +1248,7 @@ DIRECT_REPLY_TOOLS = {
     "close_browser_tab", "switch_to_browser_tab", "type_text", "send_whatsapp_message",
     "move_status_orb", "set_daily_update_time", "open_website", "get_system_status", "set_radio", "get_weather", "review_logs",
     "app_click", "app_menu", "app_type", "app_keys",  # mcp_servers/windows_apps.py: "Clicked Save in Untitled - Notepad."
-    "get_new_ability", "design_image", "design_logo", "design_poster", "design_diagram", "design_presentation",
+    "get_new_ability", "daily_briefing", "design_image", "design_logo", "design_poster", "design_diagram", "design_presentation",
     "design_document", "add_task", "complete_task", "make_plan", "plan_my_day", "think_deeply", "list_tasks",
 }
 

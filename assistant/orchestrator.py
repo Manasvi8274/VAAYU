@@ -583,6 +583,8 @@ class Orchestrator:
         threading.Thread(target=self._watch_stop_request, daemon=True, name="stop-request").start()
         from assistant import alarms
         alarms.start_scheduler(speak=self._speak, set_volume=_at_least_volume)
+        from assistant.tools import briefing
+        briefing.watch_battery(self._speak)  # says when the battery runs low
         if self.continuous:
             from assistant.audio.name_spotter import NameSpotter
             from assistant.tools import music
