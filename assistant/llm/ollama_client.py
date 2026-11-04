@@ -168,7 +168,11 @@ _ENGLISH_WORDS = re.compile(r"\b(?:the|a|an|is|are|was|to|of|and|in|on|for|it|th
                             r"how|why|when|where|can|could|will|would|do|does|did|play|open|close|please|with|"
                             r"about|from|not|no|yes|be|have|has|so|but|if|just|tell|want|need)\b", re.I)
 _MORE_HINDI = re.compile(r"\b(?:aur|hoon|hun|hu|aaj|kal|bahut|bohot|mera|meri|tera|teri|tum|tu|kyun|kyu|kab|kahan|"
-                         r"kaun|haan|nahin|mujhe|tumhe|batao|bata|bolo|chalo|dekho|samjha|matlab|lekin|par)\b", re.I)
+                         r"kaun|haan|nahin|mujhe|tumhe|batao|bata|bolo|chalo|dekho|samjha|matlab|lekin|par|"
+                         # real log (11-04): "Kya haal chao mere baayi" / "Like terina hindi samaj niya ti"
+                         r"mere|haal|hal|chal|bhai|bhaai|baayi|bhayi|yaar|samaj|samajh|aati|aata|lagta|lagti|tujhe|"
+                         r"tera|tumhara|tumhari|apna|apni|kaisa|kaisi|kidhar|idhar|udhar|abhi|sab|thoda|zara|bas|"
+                         r"kar|karo|kiya|diya|liya|gaya|gayi|hua|hui|wala|wali|niya|nai|na)\b", re.I)
 
 
 def is_hindi(text: str) -> bool:
@@ -181,7 +185,7 @@ def is_hindi(text: str) -> bool:
     if len(words) < 3:
         return False
     hindi = len(_HINDI_WORDS.findall(text)) + len(_MORE_HINDI.findall(text))
-    return hindi >= 2 and hindi / len(words) >= 0.3 and len(_ENGLISH_WORDS.findall(text)) <= len(words) * 0.15
+    return hindi >= 2 and hindi / len(words) >= 0.3 and len(_ENGLISH_WORDS.findall(text)) <= len(words) * 0.2
 
 
 def _romanize(text: str) -> str:

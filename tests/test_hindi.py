@@ -17,6 +17,8 @@ def test_hindi_yes_and_no(text, yes):
     # what the speech model wrote for Kokoro's Hindi voice - Roman Hindi
     ("Namaste bhai me vaayu hoon aaj mausam bohot achha hai aur me apka gana chala raha hoon.", True),
     ("aaj mera mood kharab hai kya karun", True), ("tum kaise ho bhai", True), ("मौसम कैसा है", True),
+    ("Kya haal chao mere baayi.", True), ("Like terina hindi samaj niya ti.", True),  # real log 11-04, missed
+    ("Vaayu play another song likhe jo khat tujhe bollywood song indian song.", False),
     ("Play a bollywood song song name is meher baan hua.", False),  # English with a Hindi song name
     ("Pause that song and can you recommend me some song names.", False),
     ("How can I find a new job I have been working as s-t-e-t so.", False),
