@@ -174,6 +174,7 @@ def _no_real_internet_lookups():
     def offline(*args, **kwargs):
         raise ConnectionError(web_answer._OFFLINE)
     with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(web_answer, "_real_get_json", web_answer._get_json, raising=False)
         mp.setattr(web_answer, "_get_json", offline)
         mp.setattr(web_answer, "_ddg_text", offline)
         yield

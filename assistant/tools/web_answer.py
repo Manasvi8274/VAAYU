@@ -34,12 +34,18 @@ _WMO = {0: "clear", 1: "mostly clear", 2: "partly cloudy", 3: "cloudy", 45: "fog
 
 
 def _get_json(url: str, params: dict) -> dict:
-    try:
-        r = httpx.get(url, params=params, timeout=_TIMEOUT)
-        r.raise_for_status()
-        return r.json()
-    except httpx.HTTPError as exc:
-        raise ConnectionError(_OFFLINE) from exc
+    # Real log (2026-11-01): "weather in gurugram" twice said "I couldn't reach the internet" while it was up -
+    # the connection was just slow that minute (13 s measured). One more try with more time before giving up.
+    for timeout in (_TIMEOUT, 15):
+        try:
+            r = httpx.get(url, params=params, timeout=timeout)
+            r.raise_for_status()
+            return r.json()
+        except httpx.HTTPStatusError as exc:
+            raise ConnectionError(_OFFLINE) from exc
+        except httpx.HTTPError as exc:
+            last = exc
+    raise ConnectionError(_OFFLINE) from last
 
 
 def _ddg_text(query: str) -> list[dict]:
@@ -61,7 +67,8 @@ _REGION_WORDS = {"india", "bharat", "haryana", "punjab", "delhi ncr", "ncr", "up
 
 
 # Old names the geocoder puts elsewhere: "gurgaon" was a village in Maharashtra, "bangalore" a town in Pakistan.
-_OLD_NAMES = {"gurgaon": "gurugram", "bangalore": "bengaluru", "bombay": "mumbai", "calcutta": "kolkata",
+_OLD_NAMES = {"gurgaon": "gurugram", "gurgam": "gurugram", "gurgao": "gurugram", "gurgav": "gurugram",
+              "guru gao": "gurugram", "guru gaon": "gurugram", "gudgaon": "gurugram",  # how Whisper hears it "bangalore": "bengaluru", "bombay": "mumbai", "calcutta": "kolkata",
               "madras": "chennai", "poona": "pune", "baroda": "vadodara", "mysore": "mysuru", "trivandrum":
               "thiruvananthapuram", "benares": "varanasi", "banaras": "varanasi"}
 
@@ -74,6 +81,9 @@ def _locate(place: str) -> tuple[str, float, float]:
         return here["city"], here["lat"], here["lon"]
     # Open-Meteo wants a bare place name - live, "gurgaon india" and "haryana, panipat" found nothing.
     # Try what was said, then without country/state words, then each word, Indian places first.
+    for heard, real in _OLD_NAMES.items():  # two-word mishearings first: "guru gao" found Gaomi, China
+        if " " in heard:
+            place = re.sub(rf"\b{heard}\b", real, place, flags=re.I)
     words = [_OLD_NAMES.get(w, w) for w in re.split(r"[\s,]+", place.lower()) if w and w not in _REGION_WORDS]
     place = _OLD_NAMES.get(place.strip().lower(), place)
     for name in dict.fromkeys([place.strip(), " ".join(words), *reversed(words)]):

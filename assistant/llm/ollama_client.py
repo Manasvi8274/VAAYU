@@ -137,6 +137,12 @@ _TOOL_TOPIC = re.compile(r"\b(?:battery|charg\w*|wi-?fi|internet|bluetooth|awaa?
 _PERSONAL = re.compile(r"\b(?:i|i'm|im|i've|i'd|my|me|myself|mujhe|mujhko|mera|meri|mere|main|mai|hum|life|feel|"
                        r"feeling|bhai|tum|tu|aap|you think|advice|opinion)\b", re.I)
 _HINDI_WORDS = re.compile(r"\b(?:hai|hain|kya|aap|aapko|ko|ka|ki|ke|mein|nahi|karo|kar|hum|apna|fir|phir|yeh|ye|toh|bhi|kuch|kaise|accha|achha|raha|rahi|karne|karna|hoga|hogi|wala|sakte|sakta)\b", re.I)
+# Hindi (user, 2026-11-04: "I want Vaayu to speak in Hindi also"). Measured: the 3B brain's Hindi is broken
+# ("tell me a joke" -> "what's your name?"); qwen3.5:4b writes proper Hindi in 4-7 s. A Hindi chat goes to it
+# (a model switch on the 4 GB GPU costs ~10 s the first time).
+HINDI_MODEL = "qwen3.5:4b-q4_K_M"  # calibration knob
+_HINDI_RULE = ("The user spoke Hindi: reply in simple, natural spoken Hindi in Devanagari script, like an elder "
+               "brother (bhai) - warm, at most 3 short sentences, no English sentences, no emojis.")
 _DEVANAGARI = re.compile(r"[ऀ-ॿ]")
 # Few-shot turns: told only in words, the 3B model answered Hinglish in Devanagari. Its Roman
 # Hinglish was tested too (and after training on Claude-written Hinglish): fluent-sounding but
@@ -243,7 +249,7 @@ def _sanitize_reply(text: str, max_sentences: int = 2) -> str:
         return _DIDNT_GET_IT
     if _TOOL_NAME_RE.search(cleaned):
         return _DIDNT_GET_IT
-    sentences = re.split(r"(?<=[.!?])\s+", cleaned)
+    sentences = re.split(r"(?<=[.!?।])\s+", cleaned)  # । "।": Hindi's full stop
     if len(cleaned) > _MAX_SPOKEN_CHARS and len(sentences) > max_sentences:
         cleaned = " ".join(sentences[:max_sentences])
     return cleaned
@@ -326,6 +332,16 @@ class OllamaBrain:
         history = []
         for turn in memory.recent_turns(_CHAT_TURNS):
             history += [{"role": "user", "content": turn["user"]}, {"role": "assistant", "content": turn["reply"]}]
+        if _DEVANAGARI.search(user_text):  # spoken Hindi: answered in Hindi, said by the Hindi voice
+            response = self.client.chat(
+                model=HINDI_MODEL, keep_alive=_KEEP_ALIVE, think=False,
+                messages=[{"role": "system", "content": system + "\n" + _HINDI_RULE}, *history,
+                          {"role": "user", "content": user_text}],
+                options={"num_ctx": 4096, "num_predict": 220, "temperature": 0.5},
+            )
+            reply = _sanitize_reply(response["message"].get("content", ""), max_sentences=4)
+            self.trace.append({"path": "chat", "hindi": True})
+            return reply, messages + [{"role": "assistant", "content": reply}]
         convo = [{"role": "system", "content": system}, *_CHAT_EXAMPLES, *history, {"role": "user", "content": user_text}]
         for attempt in range(2):
             response = self.client.chat(

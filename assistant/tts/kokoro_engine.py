@@ -30,7 +30,7 @@ import sounddevice as sd
 from assistant.tts.base import TTSEngine
 
 MODEL_DIR = Path(__file__).resolve().parent.parent.parent / "models" / "kokoro"
-_SENTENCE = re.compile(r"(?<=[.!?])\s+")
+_SENTENCE = re.compile(r"(?<=[.!?।])\s+")  # "।" is Hindi's full stop
 _CLAUSE = re.compile(r"(?<=[,;:])\s+|\s+(?=- )")
 _CACHE_SIZE = 300
 _CACHE_MAX_CHARS = 80
@@ -56,6 +56,10 @@ def _sentences(text: str) -> list[str]:
 VOICES = {"echo": "am_echo", "lewis": "bm_lewis", "george": "bm_george", "daniel": "bm_daniel",
           "fable": "bm_fable", "adam": "am_adam", "omega": "hm_omega", "psi": "hm_psi", "michael": "am_michael",
           "puck": "am_puck", "heart": "af_heart", "emma": "bf_emma"}
+# Hindi (user, 2026-11-04: "I want Vaayu to speak in Hindi also"): a sentence in Devanagari is spoken with Kokoro's
+# own Hindi voice - measured: Whisper large-v3 read hm_omega/hm_psi/hf_alpha back almost word for word.
+HINDI_VOICE = "hm_omega"  # calibration knob: hm_psi (heavier), hf_alpha / hf_beta (female)
+_DEVANAGARI = re.compile(r"[ऀ-ॿ]")
 VOICE_FILE = Path(__file__).resolve().parent.parent.parent / "data" / "voice.txt"
 ACTIVE: "KokoroEngine | None" = None  # the running engine, for the set_voice tool
 
@@ -95,7 +99,9 @@ class KokoroEngine(TTSEngine):
     def _synth(self, text: str) -> tuple[np.ndarray, int]:
         if text in self._cache:
             return self._cache[text]
-        samples, rate = self.kokoro.create(text, voice=self.voice, speed=self.speed, lang="en-us")
+        hindi = bool(_DEVANAGARI.search(text))
+        samples, rate = self.kokoro.create(text, voice=HINDI_VOICE if hindi else self.voice, speed=self.speed,
+                                           lang="hi" if hindi else "en-us")
         out = np.asarray(samples, dtype=np.float32), rate
         if len(text) <= _CACHE_MAX_CHARS:  # short, repeatable replies ("Playing.", "Opened Brave.")
             if len(self._cache) >= _CACHE_SIZE:

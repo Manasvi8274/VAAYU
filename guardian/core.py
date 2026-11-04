@@ -258,7 +258,11 @@ def _phrase_loop(trigger, stop: threading.Event) -> None:
         import webrtcvad
         from faster_whisper import WhisperModel
 
-        model = WhisperModel(_KILL_MODEL, device="cpu", compute_type="int8")
+        try:  # the copy on disk: checking Hugging Face for updates failed on a slow connection and the
+            # kill-phrase listener died with it (guardian.log, 2026-11-04)
+            model = WhisperModel(_KILL_MODEL, device="cpu", compute_type="int8", local_files_only=True)
+        except Exception:  # not downloaded yet
+            model = WhisperModel(_KILL_MODEL, device="cpu", compute_type="int8")
         frames: "queue.Queue[bytes]" = queue.Queue()
         with sd.RawInputStream(samplerate=Segmenter.RATE, blocksize=Segmenter.FRAME, dtype="int16", channels=1,
                                callback=lambda data, n, t, s: frames.put(bytes(data))):

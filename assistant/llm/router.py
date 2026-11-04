@@ -278,7 +278,7 @@ _QUESTION = re.compile(r"\b(is|are|am|what|what's|how|how's|which|kitni|kitna|ky
 # "what's playing", battery, tabs, notes, time/date never reach the web.
 _WEATHER = re.compile(r"\b(?:weather|temperature|mausam|forecast|humidity)\b|\bbaa?rish\b|\bhow (?:hot|cold|warm)\b|"
                       r"\b(?:will it|is it|going to|gonna)\b.*\b(?:rain|snow|hot|cold|sunny)\b", re.I)
-_WEATHER_PLACE = re.compile(r"\b(?:in|at|of|for) (?:the )?(?P<p>[a-z][a-z .'-]*?)(?: (?:today|tomorrow|tonight|now|this week|kal|aaj))?$|"
+_WEATHER_PLACE = re.compile(r"^.*\b(?:in|at|of|for) (?:the )?(?P<p>[a-z][a-z .'-]*?)(?: (?:today|tomorrow|tonight|now|this week|kal|aaj))?$|"
                             r"^(?:aaj |kal )?(?P<p2>[a-z][a-z .'-]*?) (?:ka|ki|me|mein|mai) (?:mausam|weather|temperature|baa?rish)", re.I)
 _NOT_A_PLACE = {"it", "today", "tomorrow", "outside", "here", "the day", "the week", "now", "aaj", "kal", "my city",
                 "my area", "my place", "my location", "where i am", "me", "us"}
@@ -871,7 +871,8 @@ def _route_one(t: str):
         return ("tool", "open_website", {"url_or_query": url})
     if m := _WEBSITE.match(t):
         return ("tool", "open_website", {"url_or_query": m.group("url") or m.group("site")})
-    if (m := _WEB_SEARCH.match(t)) and not _LOCAL_HINT.search(t):
+    # (not the weather: real log "Look up for today's weather in guru gao india" opened a web search)
+    if (m := _WEB_SEARCH.match(t)) and not _LOCAL_HINT.search(t) and not (_WEATHER.search(t) and not t.lower().startswith("search")):
         return ("tool", "open_website", {"url_or_query": m.group("q")})
     if routed := _route_in_app(t):
         return routed
@@ -1003,12 +1004,29 @@ def _volume_follow_up(t: str, last_reply: str):
                        {"action": "volume_set", "level": min(level, 100)})])
 
 
+_DEVANAGARI = re.compile("[ऀ-ॿ]")
+_ROMAN_FIXES = {"avaz": "awaz", "avaj": "awaz"}
+
+
+def to_roman(text: str) -> str:
+    """Hindi said in Devanagari -> the Roman Hinglish the rules know: "गाना चलाओ" -> "gana chalao"."""
+    if not _DEVANAGARI.search(text or ""):
+        return text
+    from indic_transliteration import sanscript
+    out = sanscript.transliterate(text, sanscript.DEVANAGARI, sanscript.ITRANS)
+    out = out.replace(".N", "n").replace(".n", "n").replace("M", "n").replace("~N", "n").replace("|", ".")
+    out = out.replace(".a", "")
+    out = re.sub(r"(?<=[^aeiouAEIOU\W])a\b", "", out)  # Hindi drops the final "a": "karo", not "karoa"
+    out = out.lower().replace("aa", "a").replace("ii", "i").replace("uu", "u")
+    return " ".join(_ROMAN_FIXES.get(w, w) for w in out.split())
+
+
 def fast_route(text: str, last_reply: str = ""):
     """("reply", text) / ("tools", [(name, args), ...]) for an unambiguous
     command, or None to fall back to the LLM. Deliberately conservative:
     a miss only costs LLM latency, a wrong hit does the wrong thing.
     last_reply: Vaayu's previous reply ("Music volume is now 70%." makes "reduce it to 20" the song's)."""
-    routed = _fast_route(text, last_reply)
+    routed = _fast_route(to_roman(text), last_reply)
     if routed and routed[0] == "tools" and any(n == "play_music" and _NO_NAME.search(a.get("query", ""))
                                                for n, a in routed[1]):
         return ("reply", "I didn't catch the song's name - say 'play' and the name.")

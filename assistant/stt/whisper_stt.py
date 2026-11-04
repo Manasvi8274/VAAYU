@@ -100,6 +100,14 @@ def _resolve_model(model_size: str) -> str:
     return fallback
 
 
+def _load_whisper(name: str, device: str, compute_type: str) -> WhisperModel:
+    """The copy on disk first - a slow connection made the online update check fail (guardian.log, 2026-11-04)."""
+    try:
+        return WhisperModel(name, device=device, compute_type=compute_type, local_files_only=True)
+    except Exception:
+        return WhisperModel(name, device=device, compute_type=compute_type)
+
+
 class WhisperSTT:
     def __init__(
         self,
@@ -125,14 +133,14 @@ class WhisperSTT:
             if _gpu_free_mib() >= need:
                 try:
                     _load_cuda_libraries()
-                    self.model = WhisperModel(model_size, device="cuda", compute_type=compute_type or "int8_float16")
+                    self.model = _load_whisper(model_size, "cuda", compute_type or "int8_float16")
                     self.device = "cuda"
                     return
                 except Exception as exc:  # no usable CUDA runtime - fall back, don't crash
                     print(f"Vaayu: speech model can't use the GPU ({exc}) - using the CPU.")
             else:
                 print(f"Vaayu: not enough free GPU memory for the '{model_size}' speech model - using the CPU.")
-        self.model = WhisperModel(model_size, device="cpu", compute_type=compute_type or "int8")
+        self.model = _load_whisper(model_size, "cpu", compute_type or "int8")
 
     def transcribe(self, audio: np.ndarray) -> str:
         # vad_filter=True runs faster-whisper's built-in (Silero) VAD as a

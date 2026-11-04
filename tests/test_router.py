@@ -345,3 +345,31 @@ def test_brain_hands_the_router_its_last_reply():
                        {"role": "assistant", "content": "Music volume is now 70%."},
                        {"role": "user", "content": "Reduce it to 20 percent."}], registry, lambda *a: True)
     fr.assert_called_once_with("Reduce it to 20 percent.", "Music volume is now 70%.")
+
+
+@pytest.mark.parametrize("text, place", [  # real log 2026-11-01: none of these told the weather
+    ("How is the weather today in gurgam.", "gurgam"),
+    ("Look up for today's weather in guru gao india.", "guru gao india"),  # was a web search
+    ("Tell me the weather in gurugram india today.", "gurugram india"),
+])
+def test_weather_phrases_from_the_log(text, place):
+    assert router.fast_route(text) == ("tools", [("get_weather", {"place": place})])
+
+
+def test_a_slow_connection_gets_a_second_try(monkeypatch):
+    import httpx
+    from assistant.tools import web_answer
+    calls = []
+
+    def flaky(url, params=None, timeout=None):
+        calls.append(timeout)
+        if len(calls) == 1:
+            raise httpx.ConnectTimeout("timed out")
+        return httpx.Response(200, json={"ok": 1}, request=httpx.Request("GET", url))
+    monkeypatch.setattr(web_answer.httpx, "get", flaky)
+    assert web_answer._real_get_json("https://x", {}) == {"ok": 1} and len(calls) == 2
+
+
+def test_hindi_commands_take_the_fast_path():
+    assert router.fast_route("गाना रोको") == ("tools", [("control_media", {"action": "pause"})])
+    assert router.fast_route("आवाज़ कम करो") == ("tools", [("control_media", {"action": "volume_down"})])
