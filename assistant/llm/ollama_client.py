@@ -142,14 +142,9 @@ _TOOL_TOPIC = re.compile(r"\b(?:battery|charg\w*|wi-?fi|internet|bluetooth|awaa?
 _PERSONAL = re.compile(r"\b(?:i|i'm|im|i've|i'd|my|me|myself|mujhe|mujhko|mera|meri|mere|main|mai|hum|life|feel|"
                        r"feeling|bhai|tum|tu|aap|you think|advice|opinion)\b", re.I)
 _HINDI_WORDS = re.compile(r"\b(?:hai|hain|kya|aap|aapko|ko|ka|ki|ke|mein|nahi|karo|kar|hum|apna|fir|phir|yeh|ye|toh|bhi|kuch|kaise|accha|achha|raha|rahi|karne|karna|hoga|hogi|wala|sakte|sakta)\b", re.I)
-# Hindi (user, 2026-11-04: "I want Vaayu to speak in Hindi also"). Measured: the 3B brain's Hindi is broken
-# ("tell me a joke" -> "what's your name?"); qwen3.5:4b writes proper Hindi in 4-7 s. A Hindi chat goes to it
-# (a model switch on the 4 GB GPU costs ~10 s the first time).
-HINDI_MODEL = "qwen3.5:4b-q4_K_M"  # calibration knob
-_ENGLISH_ONLY = re.compile(r"- Always reply in clear, simple English.*?(?=\n- |\Z)", re.S)
-_HINDI_RULE = ("The user spoke Hindi: reply in simple, natural spoken Hindi in Devanagari script, like an elder "
-               "brother (bhai) - warm, at most 3 short sentences, no English sentences, no emojis. Call them bhai, "
-               "never beta or son.")
+# Hindi (user, 2026-11-04): the 3B brain's own Hindi is broken ("tell me a joke" -> "what's your name?"), and the 4B
+# that wrote good Hindi took ~28 s (a model swap on the 4 GB GPU) - so the 3B answers in English and the reply is
+# translated (respond -> assistant/llm/translate.py).
 _DEVANAGARI = re.compile(r"[ऀ-ॿ]")
 # Few-shot turns: told only in words, the 3B model answered Hinglish in Devanagari. Its Roman
 # Hinglish was tested too (and after training on Claude-written Hinglish): fluent-sounding but
@@ -172,7 +167,10 @@ _MORE_HINDI = re.compile(r"\b(?:aur|hoon|hun|hu|aaj|kal|bahut|bohot|mera|meri|te
                          # real log (11-04): "Kya haal chao mere baayi" / "Like terina hindi samaj niya ti"
                          r"mere|haal|hal|chal|bhai|bhaai|baayi|bhayi|yaar|samaj|samajh|aati|aata|lagta|lagti|tujhe|"
                          r"tera|tumhara|tumhari|apna|apni|kaisa|kaisi|kidhar|idhar|udhar|abhi|sab|thoda|zara|bas|"
-                         r"kar|karo|kiya|diya|liya|gaya|gayi|hua|hui|wala|wali|niya|nai|na)\b", re.I)
+                         r"kar|karo|kiya|diya|liya|gaya|gayi|hua|hui|wala|wali|niya|nai|na|"
+                         # (11-05) "Mujhe ek chutkula sunao", "Kal subah chhe baje ka alarm laga do" were missed
+                         r"ek|do|teen|sunao|suna|dikhao|lagao|laga|baje|subah|subh|shaam|raat|din|chahiye|kaam|"
+                         r"kuchh|koi|kitna|kitne|kaisa|accha|acha|achha|theek|thik|zaroor|bilkul|bhi|toh|wahi)\b", re.I)
 
 
 def is_hindi(text: str) -> bool:
@@ -287,6 +285,8 @@ def _sanitize_reply(text: str, max_sentences: int = 2) -> str:
 
 
 class OllamaBrain:
+    _hindi_turn = False
+
     def __init__(self, host: str, model: str, fast_paths: bool = True):
         self.client = ollama.Client(host=host, timeout=_CALL_TIMEOUT_SECONDS)
         self.model = model
@@ -362,20 +362,11 @@ class OllamaBrain:
         if saved:
             system += "\nTheir recent notes:\n" + "\n".join(f"- {n}" for n in saved)
         history = []
-        for turn in memory.recent_turns(_CHAT_TURNS):
+        for turn in ([] if self._hindi_turn else memory.recent_turns(_CHAT_TURNS)):  # Hindi: no history - live,
+            # the user's earlier Roman-Hindi lines pulled the English brain into broken Hinglish
+            if _DEVANAGARI.search(turn["reply"]):  # a Hindi exchange: shown to the English brain it answered in
+                continue                            # broken Hinglish (live, 2026-11-05) - Hindi is translated after
             history += [{"role": "user", "content": turn["user"]}, {"role": "assistant", "content": turn["reply"]}]
-        if is_hindi(user_text):  # spoken Hindi: answered in Hindi, said by the Hindi voice
-            response = self.client.chat(
-                model=HINDI_MODEL, keep_alive=_KEEP_ALIVE, think=False,
-                # the persona's own "always reply in English" line is dropped - live, it won, in Roman letters
-                messages=[{"role": "system", "content": _ENGLISH_ONLY.sub("", system) + "\n" + _HINDI_RULE},
-                          *history, {"role": "user", "content": user_text},
-                          {"role": "system", "content": "Reply in Hindi, written in Devanagari script (हिन्दी)."}],
-                options={"num_ctx": 4096, "num_predict": 220, "temperature": 0.5},
-            )
-            reply = _sanitize_reply(response["message"].get("content", ""), max_sentences=4)
-            self.trace.append({"path": "chat", "hindi": True})
-            return reply, messages + [{"role": "assistant", "content": reply}]
         convo = [{"role": "system", "content": system}, *_CHAT_EXAMPLES, *history, {"role": "user", "content": user_text}]
         for attempt in range(2):
             response = self.client.chat(
@@ -383,10 +374,13 @@ class OllamaBrain:
                 messages=convo,
                 keep_alive=_KEEP_ALIVE,
                 think=_THINK,
-                options={"num_ctx": BRAIN_CTX, "num_predict": 200,
+                # a Hindi reply is translated sentence by sentence (~0.4 s each) - kept to two (2-3 s rule)
+                options={"num_ctx": BRAIN_CTX, "num_predict": 70 if self._hindi_turn else 200,
                          "temperature": _CHAT_TEMPERATURE if attempt == 0 else 0.3},
             )
             reply = _sanitize_reply(response["message"].get("content", ""), max_sentences=4)
+            if self._hindi_turn:
+                reply = " ".join(re.split(r"(?<=[.!?])\s+", reply)[:2])
             if not _DEVANAGARI.search(reply) and len(_HINDI_WORDS.findall(reply)) < 3:
                 break
             # Live: the 3B model answered in Devanagari (the voice can't speak it), or in garbled Hinglish
@@ -412,6 +406,32 @@ class OllamaBrain:
                 return  # Ollama not up yet - the first question just reads them itself
 
     def respond(
+        self,
+        messages: list[dict],
+        tool_registry: ToolRegistry,
+        confirm: Callable[[str, dict], bool] = cli_confirm,
+    ) -> tuple[str, list[dict]]:
+        """A reply; when the user spoke Hindi, the (fast, English) reply translated to Hindi for the Hindi voice
+        (assistant/llm/translate.py - ~1 s, where the 4B model that wrote Hindi took ~28 s)."""
+        translated, self.reply_in_hindi = getattr(self, "reply_in_hindi", False), False  # spoken Hindi, in English now
+        said = next((m.get("content", "") for m in reversed(messages) if m.get("role") == "user"), "")
+        self._hindi_turn = hindi = translated or bool(_DEVANAGARI.search(said))  # spoken, or typed in Hindi
+        try:
+            if translated:
+                # Only a conversational answer for a translated sentence - never an action: live, "kal subah chhe
+                # baje ka alarm laga do" came out as "Yesterday at 6 am... 2" and set an alarm for 2 AM.
+                reply, messages = self._chat(messages, said)
+            else:
+                reply, messages = self._respond(messages, tool_registry, confirm)
+        finally:
+            self._hindi_turn = False
+        if hindi and not _DEVANAGARI.search(reply):
+            from assistant.llm import translate
+            self.trace.append({"path": "translate", "to": "hi"})
+            reply = translate.to_hindi(reply)
+        return reply, messages
+
+    def _respond(
         self,
         messages: list[dict],
         tool_registry: ToolRegistry,

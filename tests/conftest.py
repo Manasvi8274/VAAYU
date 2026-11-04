@@ -192,6 +192,18 @@ def _isolated_watch_history(tmp_path_factory):
 
 
 @pytest.fixture(autouse=True, scope="session")
+def _no_real_translator():
+    # Hindi replies are translated by a 620 MB model (assistant/llm/translate.py) - tests get the English back.
+    from assistant.llm import translate
+
+    def missing():
+        raise RuntimeError("no translator in tests")
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(translate, "_model", missing)
+        yield
+
+
+@pytest.fixture(autouse=True, scope="session")
 def _no_real_claude_thinking():
     # think_hard asks Claude through the user's Pro login (and the local 4B as a fallback) - never in tests.
     from assistant.tools import think

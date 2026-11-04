@@ -181,12 +181,17 @@ def test_devanagari_chat_reply_is_retried_then_romanized():
     assert not ollama_client._DEVANAGARI.search(reply) and reply.startswith("thik hai bhai")
 
 
-def test_hindi_said_gets_a_hindi_reply_from_the_hindi_model():
-    # User (2026-11-04): "I want Vaayu to speak in Hindi also" - spoken as Roman Hindi by the speech model.
+def test_hindi_said_gets_the_fast_english_answer_translated(monkeypatch):
+    # User (2026-11-05): "why is the Hindi version taking ~30 s" - the 4B Hindi model swapped into the GPU.
+    from assistant.llm import translate
     with patch("assistant.llm.ollama_client.ollama.Client"):
         brain = OllamaBrain(host="http://fake", model="m")
     brain.client = MagicMock()
-    brain.client.chat.return_value = {"message": {"role": "assistant", "content": "ठीक है भाई, चिंता मत कर।"}}
-    reply, _ = brain._chat([], "bhai tension ho rahi hai")
-    assert reply == "ठीक है भाई, चिंता मत कर।" and brain.client.chat.call_count == 1
-    assert brain.client.chat.call_args.kwargs["model"] == ollama_client.HINDI_MODEL
+    brain.client.chat.return_value = {"message": {"role": "assistant", "content": "Don't worry, bhai."}}
+    monkeypatch.setattr(translate, "to_hindi", lambda text: "चिंता मत कर भाई।")
+    brain.reply_in_hindi = True  # the orchestrator: spoken Hindi, given to the brain in English (Whisper translate)
+    tools = MagicMock(_tools={})
+    reply, _ = brain.respond([{"role": "user", "content": "I am feeling tense"}], tools)
+    assert reply == "चिंता मत कर भाई।"
+    assert all(c.kwargs["model"] == "m" for c in brain.client.chat.call_args_list)  # only the fast brain
+    tools.dispatch.assert_not_called()  # a translated sentence never acts (a mistranslation set a wrong alarm)

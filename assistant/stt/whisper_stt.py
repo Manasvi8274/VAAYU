@@ -142,6 +142,13 @@ class WhisperSTT:
                 print(f"Vaayu: not enough free GPU memory for the '{model_size}' speech model - using the CPU.")
         self.model = _load_whisper(model_size, "cpu", compute_type or "int8")
 
+    def translate(self, audio: np.ndarray) -> str:
+        """Hindi speech straight to an English sentence (Whisper's own translate task, ~0.1 s): the 3B brain doesn't
+        understand Hindi ("mood kharab hai" -> "your mood is okay", live 2026-11-05), but answers English well."""
+        segments, _info = self.model.transcribe(audio, task="translate", language="hi", vad_filter=True, beam_size=1,
+                                                max_new_tokens=_MAX_TOKENS, condition_on_previous_text=False)
+        return " ".join(segment.text.strip() for segment in segments).strip()
+
     def transcribe(self, audio: np.ndarray) -> str:
         # vad_filter=True runs faster-whisper's built-in (Silero) VAD as a
         # second, more accurate pass before transcription - it materially

@@ -595,6 +595,18 @@ class Orchestrator:
             interaction_log.log_event("name_only", text=text)
             return
 
+        from assistant.llm.ollama_client import is_hindi
+        from assistant.llm import router
+        # (a command Vaayu already knows is used as said - "play song jeene ki hai 4 din" must keep its Hindi title)
+        if audio is not None and len(audio) and is_hindi(text) and hasattr(self.stt, "translate")                 and not router.fast_route(text):
+            # Spoken Hindi: the brain gets it in English, the reply is translated back (brain.respond)
+            try:
+                english = self.stt.translate(audio)
+            except Exception:
+                english = ""
+            if english:
+                interaction_log.log_event("hindi", heard=text, english=english)
+                text, self.brain.reply_in_hindi = english, True
         self.messages.append({"role": "user", "content": text})
         self.brain.trace = []
         error = None
@@ -650,6 +662,8 @@ class Orchestrator:
         mcp_tools.ANNOUNCE = self._speak  # "On it - give me a minute" before a design or a deep think
         from assistant import research
         research.start(self.config, self.brain.client)  # reads about their topics while idle
+        from assistant.llm import translate  # Hindi replies: the translator loaded now, not on the first one
+        threading.Thread(target=translate.warm_up, daemon=True, name="translator-load").start()
         if hasattr(self.brain, "warm_up"):
             threading.Thread(target=self.brain.warm_up, daemon=True, name="brain-warm-up").start()
         if self.continuous:
