@@ -219,7 +219,7 @@ def _snapshot(ref: str, files: list[str], dest: Path) -> list[Path]:
 
 
 def propose_patch(name: str, branch: str, claim: str, tests_passed: bool, test_line: str,
-                  base: str = "vaayu-v2") -> dict:
+                  base: str = "main") -> dict:
     """A code patch to Vaayu (the daily review's fixes, on their own branch): judged by what it ADDS - the
     powers the changed files have after it and didn't before - and merged only on the user's yes."""
     import shutil

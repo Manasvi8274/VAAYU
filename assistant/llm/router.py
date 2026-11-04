@@ -668,7 +668,10 @@ _LIST_TASKS = re.compile(r"^(?:what(?:'s| is) (?:on )?my (?:to-?do|todo)(?: list
                          r"(?:to-?do|todo|tasks?)(?: list)?|what do i have to do(?P<when> today| tomorrow)?)$", re.I)
 _DONE_TASK = re.compile(r"^(?:mark|tick off|check off) (?P<task>.+?)(?: as)? (?:done|complete|completed|finished)$|"
                         r"^(?:tick off|check off) (?P<t2>.+)$", re.I)
-_THINK = re.compile(r"^(?:please )?think (?:deeply|hard|carefully|it through|this through)(?: about| on)? (?P<q>.+)$", re.I)
+_THINK = re.compile(r"^(?:please )?think (?:deeply |hard |carefully |properly )?(?:about|on|through) (?P<q>.+)$|"
+                    r"^(?:please )?think (?:deeply|hard|carefully|properly)(?: about| on)? (?P<q2>.+)$|"
+                    r"^ask claude(?: about| to| whether| if)? (?P<q3>.+)$|^(?P<q4>.+?),? think (?:deeply|hard)(?: about it)?$|"
+                    r"^(?P<q5>.+?) (?:soch ke|sochkar|soch kar) (?:batao|bata|bolo)$", re.I)
 
 
 def _route_making(t: str):
@@ -689,7 +692,8 @@ def _route_making(t: str):
     elif m := _DONE_TASK.match(t):
         routed = ("complete_task", {"task": (m.group("task") or m.group("t2")).strip()})
     elif m := _THINK.match(t):
-        routed = ("think_deeply", {"question": m.group("q").strip()})
+        q = next(g for g in m.groups() if g).strip(" .?")
+        routed = ("think_hard", {"question": q})  # Claude through the Pro login (tools/think.py) - real reasoning
     if routed is None:
         return None
     if routed[0] not in registry._tools:
@@ -1265,7 +1269,7 @@ DIRECT_REPLY_TOOLS = {
     "move_status_orb", "set_daily_update_time", "open_website", "get_system_status", "set_radio", "get_weather", "review_logs",
     "app_click", "app_menu", "app_type", "app_keys",  # mcp_servers/windows_apps.py: "Clicked Save in Untitled - Notepad."
     "get_new_ability", "daily_briefing", "design_image", "design_logo", "design_poster", "design_diagram", "design_presentation",
-    "design_document", "add_task", "complete_task", "make_plan", "plan_my_day", "think_deeply", "list_tasks",
+    "design_document", "add_task", "complete_task", "make_plan", "plan_my_day", "think_deeply", "think_hard", "list_tasks",
 }
 
 

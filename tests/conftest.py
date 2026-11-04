@@ -192,6 +192,17 @@ def _isolated_watch_history(tmp_path_factory):
 
 
 @pytest.fixture(autouse=True, scope="session")
+def _no_real_claude_thinking():
+    # think_hard asks Claude through the user's Pro login (and the local 4B as a fallback) - never in tests.
+    from assistant.tools import think
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(think, "_real_run", think.subprocess.run, raising=False)
+        mp.setattr(think.shutil, "which", lambda name: None)
+        mp.setattr(think, "_local", lambda question: "Local answer.")
+        yield
+
+
+@pytest.fixture(autouse=True, scope="session")
 def _no_real_chime():
     # The listening tone plays on the real speakers.
     from assistant import orchestrator

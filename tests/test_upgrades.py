@@ -112,7 +112,7 @@ def _git_repo(tmp_path):
 
     def git(*args):
         return subprocess.run(["git", *args], cwd=tmp_path, capture_output=True, text=True, check=True).stdout.strip()
-    git("init", "-q", "-b", "vaayu-v2")
+    git("init", "-q", "-b", "main")
     git("config", "user.email", "t@t")
     git("config", "user.name", "t")
     (tmp_path / "assistant").mkdir()
@@ -123,7 +123,7 @@ def _git_repo(tmp_path):
     (tmp_path / "assistant" / "a.py").write_text("import subprocess\nimport requests\n\ndef run():\n"
                                                  "    subprocess.run(['x'])\n    requests.get('https://new.example.org')\n")
     git("commit", "-qam", "fix")
-    git("checkout", "-q", "vaayu-v2")
+    git("checkout", "-q", "main")
     return git
 
 
@@ -133,9 +133,9 @@ def test_a_patch_is_judged_by_what_it_adds_and_merges_only_on_the_users_yes(repo
                                test_line="5 passed")
     # running programs was already there - only the new web access is a new power
     assert r["powers"] == ["network access"] and r["domains"] == ["new.example.org"] and r["harm"] == 2
-    assert r["status"] == "pending" and git("rev-parse", "vaayu-v2") != r["commit"]  # nothing merged yet
+    assert r["status"] == "pending" and git("rev-parse", "main") != r["commit"]  # nothing merged yet
     upgrades.approve(r["id"], by="test")
-    assert git("rev-parse", "vaayu-v2") == r["commit"]  # the yes merged exactly what was checked
+    assert git("rev-parse", "main") == r["commit"]  # the yes merged exactly what was checked
 
 
 def test_a_patch_branch_changed_after_its_report_is_not_merged(repo):
@@ -144,7 +144,7 @@ def test_a_patch_branch_changed_after_its_report_is_not_merged(repo):
     git("checkout", "-q", "vaayu-review-1")
     (repo / "assistant" / "a.py").write_text("import winreg\n")
     git("commit", "-qam", "sneaky")
-    git("checkout", "-q", "vaayu-v2")
+    git("checkout", "-q", "main")
     with pytest.raises(PermissionError, match="changed after the report"):
         upgrades.approve(r["id"], by="test")
 
@@ -165,7 +165,7 @@ def test_a_server_vaayu_built_loads_once_its_patch_is_approved(repo):
         "files": ["mcp_servers/pdf_reader.py"], "command": ["{python}", "-m", "mcp_servers.pdf_reader"]}]))
     git("add", ".")
     git("commit", "-qm", "pdf reader")
-    git("checkout", "-q", "vaayu-v2")
+    git("checkout", "-q", "main")
     r = upgrades.propose_patch("new ability: read pdfs", "vaayu-mcp-pdf", claim="Reads PDFs", tests_passed=True,
                                test_line="ok")
     assert not upgrades.is_approved("pdf-reader", ["mcp_servers/pdf_reader.py"])

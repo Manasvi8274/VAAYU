@@ -192,24 +192,25 @@ def build(need: str) -> dict:
     if dr._git("rev-parse", "--verify", "--quiet", branch).returncode == 0:
         branch += f"-{__import__('time').strftime('%H%M%S')}"
     tree = REPO.parent / f"{REPO.name}-{branch}"
-    made = dr._git("worktree", "add", "-b", branch, str(tree), "vaayu-v2")
+    made = dr._git("worktree", "add", "-b", branch, str(tree), dr.BASE)
     if made.returncode != 0:
         raise RuntimeError(f"couldn't make a worktree: {made.stderr.strip()[:160]}")
     keep = False
     try:
         if (REPO / "config" / "config.yaml").exists():
             shutil.copy(REPO / "config" / "config.yaml", tree / "config" / "config.yaml")
-        run = subprocess.run([claude, "-p", _claude_prompt(need, slug), "--permission-mode", "acceptEdits",
+        run = subprocess.run([claude, "-p", "--permission-mode", "acceptEdits",  # prompt on stdin (see think.py)
                               "--output-format", "text", "--allowedTools", *dr._CLAUDE_TOOLS,
                               "--disallowedTools", *dr._CLAUDE_DENY], cwd=tree, capture_output=True, text=True,
-                             timeout=dr.CLAUDE_TIMEOUT, encoding="utf-8", errors="replace", stdin=subprocess.DEVNULL,
+                             timeout=dr.CLAUDE_TIMEOUT, encoding="utf-8", errors="replace",
+                             input=_claude_prompt(need, slug),
                              creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         said = (run.stdout or "") + (run.stderr or "")
-        if dr._git("rev-list", "--count", f"vaayu-v2..{branch}").stdout.strip() in ("", "0"):
+        if dr._git("rev-list", "--count", f"{dr.BASE}..{branch}").stdout.strip() in ("", "0"):
             if dr._LIMIT_HIT.search(said):
                 raise RuntimeError("Claude's usage limit is reached - I'll need to try after it resets.")
             raise RuntimeError("Claude didn't manage to write it.")
-        changed = dr._git("diff", "--name-only", f"vaayu-v2...{branch}").stdout.split()
+        changed = dr._git("diff", "--name-only", f"{dr.BASE}...{branch}").stdout.split()
         if dr.protected_changes(changed):
             raise RuntimeError("the code it wrote touched the Guardian, so I threw it away.")
         tests = subprocess.run([str(dr.PYTHON), "-m", "pytest", "-q", "-p", "no:cacheprovider"], cwd=tree,
@@ -218,7 +219,7 @@ def build(need: str) -> dict:
         tail = ((tests.stdout or "").strip().splitlines() or ["(no output)"])[-1]
         if tests.returncode != 0:
             raise RuntimeError(f"its tests failed ({tail}), so it isn't offered.")
-        claim = dr._git("log", "--format=%B", f"vaayu-v2..{branch}").stdout.strip()[:600] or f"A tool to {need}"
+        claim = dr._git("log", "--format=%B", f"{dr.BASE}..{branch}").stdout.strip()[:600] or f"A tool to {need}"
         keep = True
         return upgrades.propose_patch(f"new ability: {need[:40]}", branch, claim, tests_passed=True, test_line=tail)
     finally:

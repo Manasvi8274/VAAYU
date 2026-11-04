@@ -17,7 +17,7 @@ logs should be deleted."
                     discarded; one whose full test suite passes here becomes a
                     pending upgrade with the Guardian's report (build plan:
                     Vaayu writes improvements, never installs them) and joins
-                    vaayu-v2 only on the user's yes ('Vaayu Upgrades'). Never
+                    main only on the user's yes ('Vaayu Upgrades'). Never
                     pushed. Vaayu picks merged changes up on its next restart.
     4. delete     - the raw logs go only after 1-3 finished. data/reviews/,
                     memory and the watch history are kept; the newest 300 voice
@@ -46,6 +46,7 @@ VAAYU_LOG = DATA / "vaayu.log"
 AUDIO_DIR = DATA / "audio"
 REVIEWS = DATA / "reviews"
 PYTHON = ROOT / ".venv" / "Scripts" / "python.exe"
+BASE = "main"  # the branch fixes are built on and merged into (vaayu-v2 was merged into main, 2026-11-01)
 AUDIO_KEEP = 300  # newest voice clips kept for training the speech model on the user's voice
 SLOW_MS = 8000
 # Build plan's latency budget: a simple command's first spoken word within ~2 s on the 1650 - measured as
@@ -232,26 +233,27 @@ def claude_session(review_dir: Path, day: str) -> str:
     if _git("rev-parse", "--verify", "--quiet", branch).returncode == 0:
         branch += datetime.now().strftime("-%H%M%S")
     tree = ROOT.parent / f"{ROOT.name}-{branch}"
-    made = _git("worktree", "add", "-b", branch, str(tree), "vaayu-v2")
+    made = _git("worktree", "add", "-b", branch, str(tree), BASE)
     if made.returncode != 0:
         raise ClaudeNotRun(f"couldn't make the review worktree: {made.stderr.strip()[:200]}")
     commits = "0"
     try:
         if (ROOT / "config" / "config.yaml").exists():
             shutil.copy(ROOT / "config" / "config.yaml", tree / "config" / "config.yaml")
-        cmd = [claude, "-p", _claude_prompt(review_dir, branch), "--permission-mode", "acceptEdits",
+        # the prompt on stdin: `claude` is a .cmd on Windows and a line break in an argument cut the prompt off
+        cmd = [claude, "-p", "--permission-mode", "acceptEdits",
                "--output-format", "text", "--add-dir", str(review_dir),
                "--allowedTools", *_CLAUDE_TOOLS, "--disallowedTools", *_CLAUDE_DENY]
         try:
             run = subprocess.run(cmd, cwd=tree, capture_output=True, text=True, timeout=CLAUDE_TIMEOUT,
-                                 encoding="utf-8", errors="replace", stdin=subprocess.DEVNULL,
+                                 encoding="utf-8", errors="replace", input=_claude_prompt(review_dir, branch),
                                  creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             said = (run.stdout or "") + "\n--- stderr ---\n" + (run.stderr or "")
             code = run.returncode
         except subprocess.TimeoutExpired:
             said, code = "(timed out)", "timeout"
         (review_dir / "claude_output.txt").write_text(said, encoding="utf-8")
-        commits = _git("rev-list", "--count", f"vaayu-v2..{branch}").stdout.strip() or "0"
+        commits = _git("rev-list", "--count", f"{BASE}..{branch}").stdout.strip() or "0"
         if commits == "0":
             if _LIMIT_HIT.search(said):  # found live: "You've hit your session limit - resets 11am"
                 raise ClaudeNotRun("Claude usage limit reached - " + said.strip().splitlines()[0][:120])
@@ -259,7 +261,7 @@ def claude_session(review_dir: Path, day: str) -> str:
                 raise ClaudeNotRun(f"claude exited with {code}: {said.strip()[:160]}")
             return "Claude found nothing to change." if (review_dir / "claude_summary.md").exists() \
                 else "The Claude session made no commits."
-        changed = _git("diff", "--name-only", f"vaayu-v2...{branch}").stdout.split()
+        changed = _git("diff", "--name-only", f"{BASE}...{branch}").stdout.split()
         if bad := protected_changes(changed):
             commits = "0"  # discard the whole branch below
             return f"Discarded Claude's changes: they touched the guardian ({', '.join(bad[:5])})."

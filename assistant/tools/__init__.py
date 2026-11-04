@@ -18,6 +18,7 @@ from assistant.tools import (  # noqa: F401
     self_review_control,
     system_control,
     system_info,
+    think,
     video_player,
     voice,
     web,

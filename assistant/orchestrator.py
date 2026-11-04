@@ -219,6 +219,8 @@ def ack_for(text: str, n: int = 0) -> str:
                 steps.append("on it")
         return "On it: " + ", then ".join(steps) + "."
     from assistant.llm.ollama_client import is_hindi
+    if routed and routed[0] == "tools" and routed[1][0][0] == "think_hard":
+        return "मुझे ठीक से सोचने दो।" if is_hindi(text) else "Let me think about that properly."
     return "एक सेकंड भाई।" if is_hindi(text) else _ACKS[n % 2]
 
 

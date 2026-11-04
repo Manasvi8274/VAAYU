@@ -64,3 +64,17 @@ def test_shortcuts_work_alone_and_as_steps():
         ("open_app", {"app_name": "notepad"}), ("type_text", {"text": "hello world"}), ("press_hotkey", {"keys": "ctrl+s"})])
     assert router.fast_route("undo") == ("tools", [("press_hotkey", {"keys": "ctrl+z"})])
     assert router.fast_route("save the trees campaign is great") is None
+
+
+def test_thinking_goes_to_claude_and_falls_back_to_the_local_model(monkeypatch):
+    import subprocess
+    from assistant.llm import router
+    from assistant.tools import think
+    assert router.fast_route("think about whether i should buy a car or a bike") == \
+        ("tools", [("think_hard", {"question": "whether i should buy a car or a bike"})])
+    assert router.fast_route("I think it is raining") is None
+    monkeypatch.setattr(think.shutil, "which", lambda name: "claude")
+    monkeypatch.setattr(think.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a, 0, "**Buy the bike.**", ""))
+    assert think.think_hard("car or bike") == "Buy the bike."  # markdown stripped for speaking
+    monkeypatch.setattr(think.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a, 0, "You've hit your usage limit", ""))
+    assert think.think_hard("car or bike") == "Local answer."  # limit reached: the local model thinks instead
