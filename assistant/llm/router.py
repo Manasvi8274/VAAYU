@@ -930,7 +930,7 @@ def _route_one(t: str):
                     args["foreground"] = False
                 return ("tool", name, args)
     if m := _VOICE.match(t):  # "change your voice" / "use the george voice" (tools/voice.py)
-        want = (m.group("v") or m.group("v2") or m.group("v3") or "next").strip().lower()
+        want = (m.group("v") or m.group("v2") or m.group("v3") or m.group("v4") or "next").strip().lower()
         return ("tool", "set_voice", {"voice": _VOICE_KIND.get(want, want)})
     if m := _PLAY_FOR.match(t):  # "play kesariya for 15 seconds" / "play it for 10 seconds"
         n = int(m.group("n") or m.group("n2")) * (60 if (m.group("u") or m.group("u2")).lower().startswith("m") else 1)
@@ -960,7 +960,8 @@ _MUSIC = re.compile(
     r"^(?P<q3>.+?) (?:ka |ke |ki )?(?:song|songs|gaana|gaane|gana|music) (?:chalao|bajao|lagao|sunao|play karo|chala do|baja do)$",
     re.I)
 _VOICE = re.compile(
-    r"^(?:change|switch|try)(?: your| the| my)?(?: own)? voice(?: to(?: an?| the)? (?P<v>\w+)(?: (?:voice|one))?.*)?$|"
+    r"^(?:change|switch|try)(?: your| the| my)?(?: own)?(?: hindi)? voice(?: to(?: an?| the)? (?P<v>\w+)(?: (?:voice|one))?.*)?$|"
+    r"^hindi voice (?P<v4>pratham|rohan|priyamvada)$|"
     r"^(?:use|try|speak in|talk in)(?: an?| the)? (?P<v2>\w+) voice.*$|^(?:try )?(?:a |another |next |different )voice$|"
     r"^(?:awaaz|awaz|voice) (?:badlo|change karo|badal do)$|^(?:become|be) an? (?P<v3>girl|boy|woman|man|female|male)$",
     re.I)

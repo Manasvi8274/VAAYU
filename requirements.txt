@@ -75,3 +75,6 @@ mcp>=2
 uiautomation
 # Guardian's upgrade report: code-safety scan of every upgrade
 bandit
+
+# A native Hindi voice (assistant/tts/kokoro_engine.py): Piper, voices in models/piper (rhasspy/piper-voices hi_IN)
+piper-tts

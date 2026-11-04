@@ -58,7 +58,15 @@ VOICES = {"echo": "am_echo", "lewis": "bm_lewis", "george": "bm_george", "daniel
           "puck": "am_puck", "heart": "af_heart", "emma": "bf_emma"}
 # Hindi (user, 2026-11-04: "I want Vaayu to speak in Hindi also"): a sentence in Devanagari is spoken with Kokoro's
 # own Hindi voice - measured: Whisper large-v3 read hm_omega/hm_psi/hf_alpha back almost word for word.
-HINDI_VOICE = "hm_omega"  # calibration knob: hm_psi (heavier), hf_alpha / hf_beta (female)
+HINDI_VOICE = "hm_omega"  # Kokoro's Hindi - used only if the native Hindi voice below can't load
+# User (2026-11-05): "I do not like his Hindi accent, I want the real Hindi accent". Kokoro's Hindi comes from
+# pronunciation rules; Piper's Hindi voices are trained on native Hindi speakers (models/piper, rhasspy/piper-voices)
+# and are 4x faster (0.33 s for 6 s of speech, CPU). "Vaayu, Hindi voice Rohan" switches (data/voice_hi.txt).
+PIPER_DIR = MODEL_DIR.parent / "piper"
+HINDI_VOICES = {"pratham": "male", "rohan": "male", "priyamvada": "female"}
+HINDI_VOICE_FILE = Path(__file__).resolve().parent.parent.parent / "data" / "voice_hi.txt"
+# The male voices said "वाई" for his name inside a long sentence; written with a hyphen they say it right.
+_HINDI_SAY = {"वायु": "वा-यु", "वायू": "वा-यु"}
 _DEVANAGARI = re.compile(r"[ऀ-ॿ]")
 VOICE_FILE = Path(__file__).resolve().parent.parent.parent / "data" / "voice.txt"
 ACTIVE: "KokoroEngine | None" = None  # the running engine, for the set_voice tool
@@ -69,6 +77,14 @@ def _saved_voice() -> str | None:
         return VOICE_FILE.read_text(encoding="utf-8").strip() or None
     except OSError:
         return None
+
+
+def _saved_hindi_voice() -> str:
+    try:
+        name = HINDI_VOICE_FILE.read_text(encoding="utf-8").strip()
+        return name if name in HINDI_VOICES else "pratham"
+    except OSError:
+        return "pratham"  # calibration knob: the default native Hindi voice
 
 
 class KokoroEngine(TTSEngine):
@@ -86,8 +102,27 @@ class KokoroEngine(TTSEngine):
         self.voice = saved if saved in self.kokoro.get_voices() else voice  # "Vaayu, change your voice" sticks
         self.speed = speed
         self._synth("Ready.")  # first call is slow (kernel setup) - pay it at startup, not on the first reply
+        threading.Thread(target=self._piper, daemon=True, name="hindi-voice-load").start()  # 3 s, not on a reply
         global ACTIVE
         ACTIVE = self
+
+    def _piper(self):
+        """The native Hindi voice (loaded on first Hindi sentence); None if it isn't there - Kokoro's then."""
+        name = _saved_hindi_voice()
+        if getattr(self, "_piper_voice", (None, None))[0] != name:
+            try:
+                from piper import PiperVoice
+                self._piper_voice = (name, PiperVoice.load(str(PIPER_DIR / f"hi_IN-{name}-medium.onnx")))
+            except Exception:
+                self._piper_voice = (name, None)
+        return self._piper_voice[1]
+
+    def set_hindi_voice(self, name: str) -> None:
+        if name not in HINDI_VOICES:
+            raise ValueError(f"No Hindi voice called {name} - there's {', '.join(HINDI_VOICES)}.")
+        HINDI_VOICE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        HINDI_VOICE_FILE.write_text(name, encoding="utf-8")
+        self._cache = {k: v for k, v in self._cache.items() if not _DEVANAGARI.search(k)}
 
     def set_voice(self, voice: str) -> None:
         if voice not in self.kokoro.get_voices():
@@ -100,8 +135,15 @@ class KokoroEngine(TTSEngine):
         if text in self._cache:
             return self._cache[text]
         hindi = bool(_DEVANAGARI.search(text))
-        samples, rate = self.kokoro.create(text, voice=HINDI_VOICE if hindi else self.voice, speed=self.speed,
-                                           lang="hi" if hindi else "en-us")
+        if hindi and (piper := self._piper()):
+            said = text
+            for word, spoken in _HINDI_SAY.items():
+                said = said.replace(word, spoken)
+            samples = np.concatenate([c.audio_float_array for c in piper.synthesize(said)] or [np.zeros(1)])
+            rate = piper.config.sample_rate
+        else:
+            samples, rate = self.kokoro.create(text, voice=HINDI_VOICE if hindi else self.voice, speed=self.speed,
+                                               lang="hi" if hindi else "en-us")
         out = np.asarray(samples, dtype=np.float32), rate
         if len(text) <= _CACHE_MAX_CHARS:  # short, repeatable replies ("Playing.", "Opened Brave.")
             if len(self._cache) >= _CACHE_SIZE:

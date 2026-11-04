@@ -36,3 +36,14 @@ def test_hindi_sentences_get_the_hindi_voice():
     assert kokoro_engine._DEVANAGARI.search("नमस्ते भाई।") and not kokoro_engine._DEVANAGARI.search("Hello bhai.")
     said = "आज मौसम बहुत अच्छा है। मैं आपका गाना चला रहा हूँ।"  # "।" ends a Hindi sentence
     assert kokoro_engine._sentences(said) == ["आज मौसम बहुत अच्छा है।", "मैं आपका गाना चला रहा हूँ।"]
+
+
+def test_hindi_voice_can_be_switched_by_voice(monkeypatch, tmp_path):
+    from assistant.tools import voice
+    monkeypatch.setattr(kokoro_engine, "HINDI_VOICE_FILE", tmp_path / "voice_hi.txt")
+    engine = kokoro_engine.KokoroEngine.__new__(kokoro_engine.KokoroEngine)
+    engine._cache = {"नमस्ते भाई।": 1, "Hello.": 2}
+    monkeypatch.setattr(kokoro_engine, "ACTIVE", engine)
+    assert router.fast_route("hindi voice rohan") == ("tools", [("set_voice", {"voice": "rohan"})])
+    assert voice.set_voice("rohan") == "Okay, my Hindi voice is now Rohan."
+    assert kokoro_engine._saved_hindi_voice() == "rohan" and engine._cache == {"Hello.": 2}  # old Hindi audio dropped
