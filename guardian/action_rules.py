@@ -41,7 +41,8 @@ _SAFE = {
     "get_sections", "get_links", "get_coordinates", "get_current_time", "convert_time", "calculate", "git_status",
     "git_log", "git_diff", "git_diff_staged", "git_diff_unstaged", "git_show", "git_branch", "get_document_text",
     "get_document_info", "read_data_from_excel", "list_presentations", "list_designs", "show_plan", "list_plans",
-    "list_tasks", "think_deeply", "get_new_ability", "task_status", "look_at_screen",
+    "list_tasks", "think_deeply", "get_new_ability", "task_status", "look_at_screen", "open_settings_page",
+    "open_folder", "open_in_vscode",
 }
 _OUTWARD = {"send_whatsapp_message", "type_sensitive_field", "browser_file_upload"}
 # Tools whose risk is in WHAT they click: "click Send" is outward, "click Pay" is blocked - and which of their

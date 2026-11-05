@@ -17,6 +17,7 @@ from assistant.tools import (  # noqa: F401
     network_status,
     notes,
     orb_control,
+    places,
     self_review_control,
     system_control,
     system_info,

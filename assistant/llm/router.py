@@ -706,6 +706,26 @@ _AGENT_STATUS = re.compile(r"^(?:how'?s|how is|what'?s the status of|status of|i
                            re.I)
 
 
+_SETTINGS_PAGE = re.compile(r"^(?:open|show|go to|take me to)(?: the| my)? (?P<p>[a-z ]+?) settings?(?: page)?$|"
+                            r"^settings (?:for|of|mein|me) (?P<p2>[a-z ]+)$", re.I)
+_FOLDER = re.compile(r"^(?:open|show)(?: me)?(?: the| my)? (?P<f>downloads?|documents?|desktop|pictures|photos|music|"
+                     r"videos?|screenshots|github)(?: folder)?$|^(?P<f2>downloads?|documents?) (?:folder )?(?:kholo|khol do)$",
+                     re.I)
+_VSCODE = re.compile(r"^open (?:the |my )?(?:project |folder |repo )?(?P<p>[\w .-]+?)(?: project| folder| repo)? in "
+                     r"(?:vs ?code|visual studio code|code)$", re.I)
+
+
+def _route_places(t: str):
+    from assistant.tools import places
+    if (m := _SETTINGS_PAGE.match(t)) and (page := (m.group("p") or m.group("p2")).strip()) in places.SETTINGS:
+        return ("tool", "open_settings_page", {"page": page})
+    if m := _FOLDER.match(t):
+        return ("tool", "open_folder", {"folder": (m.group("f") or m.group("f2")).lower()})
+    if m := _VSCODE.match(t):
+        return ("tool", "open_in_vscode", {"project": m.group("p").strip()})
+    return None
+
+
 def _route_making(t: str):
     from assistant.tools.registry import registry
     routed = None
@@ -803,6 +823,8 @@ def _route_one(t: str):
     if routed := _route_log_fixes(t):
         return routed
     if routed := _route_making(t):
+        return routed
+    if routed := _route_places(t):
         return routed
     if m := _NEW_ABILITY.match(t):
         return ("tool", "get_new_ability", {"need": next(g for g in m.groups() if g).strip(" .?")})
@@ -1366,7 +1388,7 @@ DIRECT_REPLY_TOOLS = {
     "app_click", "app_menu", "app_type", "app_keys",  # mcp_servers/windows_apps.py: "Clicked Save in Untitled - Notepad."
     "get_new_ability", "daily_briefing", "set_reminder", "design_image", "design_logo", "design_poster", "design_diagram", "design_presentation",
     "design_document", "add_task", "complete_task", "make_plan", "plan_my_day", "think_deeply", "think_hard", "list_tasks",
-    "do_task", "task_status", "look_at_screen", "click_on_screen",
+    "do_task", "task_status", "look_at_screen", "click_on_screen", "open_settings_page", "open_folder", "open_in_vscode",
 }
 
 
