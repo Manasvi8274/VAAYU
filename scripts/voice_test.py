@@ -35,7 +35,7 @@ SCENARIOS = [
     ("time", [("Vaayu, what's the time?", "en", "turn")], {"tool_or_reply": "time"}),
     ("weather", [("Vaayu, what's the weather today?", "en", "turn")], {"tool": "get_weather"}),
     ("battery", [("Vaayu, how much battery do I have?", "en", "turn")], {"tool": "get_system_status"}),
-    ("joke_then_new_one", [("Vaayu, tell me a joke.", "en", 3.0), ("Give me a new one.", "en", "turn")],
+    ("joke_then_new_one", [("Vaayu, tell me a joke.", "en", "speaking"), ("Give me a new one.", "en", "turn")],
      {"barge": True}),
     ("notepad", [("Vaayu, open notepad.", "en", "turn"), ("Vaayu, close notepad.", "en", "turn")],
      {"tool": "open_app"}),
@@ -45,7 +45,7 @@ SCENARIOS = [
     ("settings", [("Vaayu, open bluetooth settings.", "en", "turn")], {"tool": "open_settings_page"}),
     ("hindi_weather", [("वायु, आज मौसम कैसा है?", "hi", "turn")], {"tool": "get_weather"}),
     ("hindi_joke", [("वायु, एक चुटकुला सुनाओ।", "hi", "turn")], {"says": True}),
-    ("stop_mid_reply", [("Vaayu, tell me a long story about a brave little sparrow.", "en", 4.0),
+    ("stop_mid_reply", [("Vaayu, tell me a long story about a brave little sparrow.", "en", "speaking"),
                         ("Stop.", "en", 4)], {"barge": True}),
     ("think", [("Vaayu, think about whether I should learn Rust or Go first.", "en", "turn")], {"tool": "think_hard"}),
     ("screen", [("Vaayu, what's on my screen?", "en", "turn")], {"tool": "look_at_screen"}),
@@ -157,6 +157,11 @@ def run(selected=None) -> list[dict]:
                 t_end = time.time()
                 if wait == "turn":
                     _wait_turn(t_play)
+                elif wait == "speaking":  # cut in while he is talking, as a person would
+                    deadline = time.time() + 20
+                    while time.time() < deadline and not mic.first_sound_after(t_end + 0.25, time.time(), floor):
+                        time.sleep(0.1)
+                    time.sleep(1.2)
                 else:
                     time.sleep(wait)
                 first = mic.first_sound_after(t_end + 0.25, time.time(), floor)
