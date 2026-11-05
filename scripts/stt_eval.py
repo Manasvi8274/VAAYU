@@ -168,6 +168,7 @@ def run(specs):
             for cond, audio in variants:
                 t0 = time.perf_counter()
                 segs, _ = model.transcribe(audio, language="en", vad_filter=True, initial_prompt=_VOCAB_PROMPT,
+                                           without_timestamps=os.environ.get("STT_EVAL_NO_TS") == "1",
                                            beam_size=5)
                 hyp = " ".join(s.text.strip() for s in segs).strip()
                 secs = time.perf_counter() - t0

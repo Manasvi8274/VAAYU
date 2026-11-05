@@ -146,7 +146,8 @@ class WhisperSTT:
         """Hindi speech straight to an English sentence (Whisper's own translate task, ~0.1 s): the 3B brain doesn't
         understand Hindi ("mood kharab hai" -> "your mood is okay", live 2026-11-05), but answers English well."""
         segments, _info = self.model.transcribe(audio, task="translate", language="hi", vad_filter=True, beam_size=1,
-                                                max_new_tokens=_MAX_TOKENS, condition_on_previous_text=False)
+                                                max_new_tokens=_MAX_TOKENS, condition_on_previous_text=False,
+                                                without_timestamps=True)
         return " ".join(segment.text.strip() for segment in segments).strip()
 
     def transcribe(self, audio: np.ndarray) -> str:
@@ -162,6 +163,9 @@ class WhisperSTT:
             # A spoken command or chat sentence is well under this many tokens per 30 s window.
             max_new_tokens=_MAX_TOKENS,
             condition_on_previous_text=False,
+            # Vaayu never uses timestamps. Measured 2026-11-05: on the user's 40 latest real clips 1.05 -> 0.64 s each;
+            # on the labelled set (388 commands) understood 94.8 -> 94.6% clean, 93.0 -> 93.3% noisy - the same.
+            without_timestamps=True,
         )
         text = " ".join(segment.text.strip() for segment in segments).strip()
         if text.isupper() and len(text) > 12:  # the fine-tune's EdAcc labels are ALL CAPS - it picked that up
