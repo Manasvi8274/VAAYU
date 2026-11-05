@@ -724,7 +724,9 @@ def _route_making(t: str):
 
 # From the 10-26..10-31 logs: phrases that went to the slow model (11-44 s), or did the wrong thing.
 _HOLD = re.compile(r"^(?:hold|pause|stop)(?: the| this| that)? (?:sound|audio|music|song|gaana)$|"
-                   r"^(?:pause|hold) (?:that|this|it)$", re.I)  # real log: "Hold the sound." - said paused, wasn't
+                   r"^(?:pause|hold) (?:that|this|it)$|"  # real log: "Hold the sound." - said paused, wasn't
+                   # real logs: "pause the song" over music came out "For the song." (14 s) and "The song." (70 s)
+                   r"^(?:for|four|pass|paws)? ?the (?:song|music)$", re.I)
 _CANT_HEAR = re.compile(r"^(?:i'?m |i am |i )?(?:not able to|can'?t|cannot|unable to) (?:hear|listen to)(?: the)? "
                         r"(?:song|music|gaana|sound)$|^(?:song|music|gaana) (?:is not|isn'?t) (?:playing|audible)$|"
                         r"^(?:awaaz|aawaz) nahi aa rahi$", re.I)

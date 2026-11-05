@@ -280,3 +280,9 @@ def test_pause_after_his_own_hold_says_paused_and_stays_paused(playing):
     music._held.set()
     assert music.control("pause") == "Paused the song."
     assert not music._held.is_set() and playing.paused.is_set()
+
+
+@pytest.mark.parametrize("said", ["For the song.", "The song."])  # real logs: "pause the song" over music, 14 s / 70 s
+def test_misheard_pause_over_music(said):
+    from assistant.llm import router
+    assert router.fast_route(said) == ("tools", [("control_media", {"action": "pause"})])
