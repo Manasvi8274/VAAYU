@@ -744,8 +744,9 @@ class Orchestrator:
         mcp_builder.ANNOUNCE = self._speak  # "a tool to X is ready - waiting for your yes"
         mcp_tools.ANNOUNCE = self._speak  # "On it - give me a minute" before a design or a deep think
         threading.Thread(target=memory.index_past_talk, daemon=True, name="memory-backfill").start()
-        from assistant import agent
-        agent.ANNOUNCE = self._speak  # a background job's "Done with your task. ..."
+        from assistant import agent, proactive
+        agent.ANNOUNCE = self._speak
+        proactive.start(self._speak, busy=lambda: self._busy)  # welcome backs, breaks, late nights - if turned on  # a background job's "Done with your task. ..."
         from assistant import research
         research.start(self.config, self.brain.client)  # reads about their topics while idle
         from assistant.llm import translate  # Hindi replies: the translator loaded now, not on the first one

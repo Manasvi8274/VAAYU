@@ -715,6 +715,27 @@ _VSCODE = re.compile(r"^open (?:the |my )?(?:project |folder |repo )?(?P<p>[\w .
                      r"(?:vs ?code|visual studio code|code)$", re.I)
 
 
+_PROACTIVE = re.compile(r"^(?:turn|switch|set) (?P<on>on|off) (?:the |your |my )?(?P<k>proactive mode|proactive|"
+                        r"welcome back(?: greetings?)?|break reminders?|breaks? reminders?|late night reminders?|"
+                        r"night reminders?|sleep reminders?)$|"
+                        r"^(?:turn|switch) (?:the |your |my )?(?P<k2>proactive mode|break reminders?|welcome back(?: greetings?)?|"
+                        r"late night reminders?) (?P<on2>on|off)$|"
+                        r"^(?P<stop>stop|don'?t) (?:reminding me to take breaks|telling me to sleep|greeting me|speaking up)$",
+                        re.I)
+
+
+def _route_proactive(t: str):
+    if not (m := _PROACTIVE.match(t)):
+        return None
+    if m.group("stop"):
+        said = t.lower()
+        kind = "breaks" if "break" in said else "night" if "sleep" in said else "welcome" if "greet" in said else ""
+        return ("tool", "set_proactive", {"kind": kind, "on": False})
+    k, on = (m.group("k") or m.group("k2")).lower(), (m.group("on") or m.group("on2")).lower() == "on"
+    kind = "breaks" if "break" in k else "night" if ("night" in k or "sleep" in k) else "welcome" if "welcome" in k else ""
+    return ("tool", "set_proactive", {"kind": kind, "on": on})
+
+
 def _route_places(t: str):
     from assistant.tools import places
     if (m := _SETTINGS_PAGE.match(t)) and (page := (m.group("p") or m.group("p2")).strip()) in places.SETTINGS:
@@ -825,6 +846,8 @@ def _route_one(t: str):
     if routed := _route_making(t):
         return routed
     if routed := _route_places(t):
+        return routed
+    if routed := _route_proactive(t):
         return routed
     if m := _NEW_ABILITY.match(t):
         return ("tool", "get_new_ability", {"need": next(g for g in m.groups() if g).strip(" .?")})
@@ -1389,6 +1412,7 @@ DIRECT_REPLY_TOOLS = {
     "get_new_ability", "daily_briefing", "set_reminder", "design_image", "design_logo", "design_poster", "design_diagram", "design_presentation",
     "design_document", "add_task", "complete_task", "make_plan", "plan_my_day", "think_deeply", "think_hard", "list_tasks",
     "do_task", "task_status", "look_at_screen", "click_on_screen", "open_settings_page", "open_folder", "open_in_vscode",
+    "set_proactive",
 }
 
 

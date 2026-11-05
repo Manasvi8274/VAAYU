@@ -221,6 +221,8 @@ def _no_real_claude_thinking():
         from assistant.tools import places  # Settings pages, folders, VS Code: never really opened by a test
         mp.setattr(places, "_open", lambda target: None)
         mp.setattr(places, "_launch", lambda cmd: None)
+        from assistant import proactive  # the user's proactive switches: never changed by a test
+        mp.setattr(proactive, "PATH", agent.LOG.parent / "test_proactive.json")
         from assistant import routines  # the user's own routines: never changed by a test
         mp.setattr(routines, "PATH", agent.LOG.parent / "test_routines.json")
         from assistant.tools import screen_memory
