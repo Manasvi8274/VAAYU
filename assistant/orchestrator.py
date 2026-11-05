@@ -235,7 +235,8 @@ def ack_for(text: str, n: int = 0) -> str:
 _SLOW_STEPS = {"get_weather": "Okay, checking the weather.", "answer_question": "Okay, let me check.",
                "play_music": "Okay, finding it.", "play_video_on_youtube": "Okay, finding the video.",
                "play_latest_video_from_channel": "Okay, finding the latest one.",
-               "play_recommended": "Okay, finding something.", "think_hard": "Let me think about that properly."}
+               "play_recommended": "Okay, finding something.", "think_hard": "Let me think about that properly.",
+               "look_at_screen": "Let me look.", "click_on_screen": "Okay, looking for it."}
 
 
 def _slow_step(routed) -> str | None:

@@ -214,6 +214,10 @@ def _no_real_claude_thinking():
         from assistant import agent  # a background job's planner: Claude, else the local 4B - neither in tests
         mp.setattr(agent, "_local_plan", lambda prompt: '{"done": "Local plan."}')
         mp.setattr(agent, "LOG", agent.LOG.parent / "test_agent_jobs.jsonl")
+        from assistant.tools import screen  # the screen: never grabbed, looked at, or clicked from a test
+        mp.setattr(screen, "_grab", lambda: (_ for _ in ()).throw(RuntimeError("no screen in tests")))
+        mp.setattr(screen, "_ask_local", lambda img, prompt: "Local look.")
+        mp.setattr(screen, "_click", lambda x, y: None)
         yield
 
 

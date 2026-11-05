@@ -1091,11 +1091,36 @@ def fast_route(text: str, last_reply: str = ""):
     command, or None to fall back to the LLM. Deliberately conservative:
     a miss only costs LLM latency, a wrong hit does the wrong thing.
     last_reply: Vaayu's previous reply ("Music volume is now 70%." makes "reduce it to 20" the song's)."""
-    routed = _fast_route(to_roman(text), last_reply)
+    routed = _fast_route(to_roman(text), last_reply) or _route_screen(normalize(to_roman(text)))
     if routed and routed[0] == "tools" and any(n == "play_music" and _NO_NAME.search(a.get("query", ""))
                                                for n, a in routed[1]):
         return ("reply", "I didn't catch the song's name - say 'play' and the name.")
     return routed
+
+
+# The screen (assistant/tools/screen.py) - only when nothing more specific matched ("click save in notepad" is
+# app_click, "click the second video" a YouTube result).
+_SCREEN = re.compile(r"^(?:what'?s|what is|what do you see|what can you see) on (?:my|the|this) screen$|"
+                     r"^(?:look at|check|read|see) (?:my |the |this )?screen(?: and (?P<q>.+))?$|"
+                     r"^(?:read|explain) (?:this|the|that) (?:error|message|text|popup|pop up|warning)(?: for me)?"
+                     r"(?: on (?:my|the) screen)?$|^what (?:does|is) (?:this|that) (?:error|message|popup|warning)"
+                     r"(?: say| mean| about)?$|^(?:my |the )?screen (?:pe|par|mein) kya (?:hai|dikh raha hai)$|"
+                     r"^(?:on (?:my|the) screen,? )(?P<q2>.+)$", re.I)
+_CLICK_SCREEN = re.compile(r"^(?:click|tap)(?: on)? (?P<t>(?:the |that |this )?.{3,60}?)(?: on (?:my|the) screen)?$|"
+                           r"^(?P<t2>.{3,60}?) (?:pe|par) click (?:karo|kar do)$", re.I)
+
+
+_ON_A_PAGE = re.compile(r"\b(?:on|in) (?:youtube|the (?:web ?)?page|this page|the (?:web)?site|google|the browser|"
+                        r"chrome|brave|edge|firefox)\b", re.I)
+
+
+def _route_screen(t: str):
+    if m := _SCREEN.match(t):
+        q = (m.group("q") or m.group("q2") or "").strip(" .?")
+        return ("tools", [("look_at_screen", {"question": q or t})])
+    if (m := _CLICK_SCREEN.match(t)) and not _ON_A_PAGE.search(t):  # a web page: click_on_page reads the page itself
+        return ("tools", [("click_on_screen", {"target": (m.group("t") or m.group("t2")).strip(" .")})])
+    return None
 
 
 def _fast_route(text: str, last_reply: str):
@@ -1308,7 +1333,7 @@ DIRECT_REPLY_TOOLS = {
     "app_click", "app_menu", "app_type", "app_keys",  # mcp_servers/windows_apps.py: "Clicked Save in Untitled - Notepad."
     "get_new_ability", "daily_briefing", "set_reminder", "design_image", "design_logo", "design_poster", "design_diagram", "design_presentation",
     "design_document", "add_task", "complete_task", "make_plan", "plan_my_day", "think_deeply", "think_hard", "list_tasks",
-    "do_task", "task_status",
+    "do_task", "task_status", "look_at_screen", "click_on_screen",
 }
 
 

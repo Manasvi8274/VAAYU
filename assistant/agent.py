@@ -25,7 +25,7 @@ ANNOUNCE = None        # the orchestrator sets this to Vaayu's voice
 # Tools a job may use: reading, looking up, writing things down, making documents. (MCP tools join by name once loaded.)
 ALLOWED = {
     "answer_question", "get_weather", "read_page", "read_file", "search_files", "list_notes", "add_note",
-    "list_open_windows", "list_browser_tabs", "think_hard",  # nothing that grabs the screen: jobs run behind
+    "list_open_windows", "list_browser_tabs", "think_hard", "look_at_screen",  # nothing that grabs the screen: jobs run behind
     "search", "fetch", "fetch_content", "search_wikipedia", "get_summary", "get_article", "calculate",
     "get_current_time", "convert_time", "design_document", "design_presentation", "design_diagram", "design_image",
     "make_plan", "add_task", "list_tasks", "show_plan", "write_data_to_excel", "create_workbook",

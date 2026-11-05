@@ -41,14 +41,14 @@ _SAFE = {
     "get_sections", "get_links", "get_coordinates", "get_current_time", "convert_time", "calculate", "git_status",
     "git_log", "git_diff", "git_diff_staged", "git_diff_unstaged", "git_show", "git_branch", "get_document_text",
     "get_document_info", "read_data_from_excel", "list_presentations", "list_designs", "show_plan", "list_plans",
-    "list_tasks", "think_deeply", "get_new_ability", "task_status",
+    "list_tasks", "think_deeply", "get_new_ability", "task_status", "look_at_screen",
 }
 _OUTWARD = {"send_whatsapp_message", "type_sensitive_field", "browser_file_upload"}
 # Tools whose risk is in WHAT they click: "click Send" is outward, "click Pay" is blocked - and which of their
 # arguments name that thing (what is TYPED is not judged: "I want to buy..." typed in a box is just text).
 _CLICK_KEYS = {"click_on_page": ("description",), "app_click": ("target",), "app_menu": ("path",),
                "browser_click": ("element",), "browser_select_option": ("element",), "browser_type": ("element",),
-               "browser_fill_form": ("fields",), "browser_press_key": ("key",)}
+               "browser_fill_form": ("fields",), "browser_press_key": ("key",), "click_on_screen": ("target",)}
 _CLICKS = set(_CLICK_KEYS)
 _OUTWARD_WORDS = re.compile(r"\b(?:send|post|submit|publish|reply|share|tweet|email|e-mail|upload|forward|"
                             r"bhejo|bhej do|book|confirm order)\b", re.I)
@@ -58,7 +58,8 @@ _DANGEROUS_WORDS = re.compile(r"\b(?:pay|payment|buy|purchase|checkout|check out
 # Tools that bring outside text into the turn - an outward action right after one is refused.
 CONTENT_TOOLS = {"read_page", "read_file", "answer_question", "app_read", "search_files", "get_weather",
                  "fetch", "fetch_content", "search", "browser_snapshot", "browser_navigate", "read_text_file",
-                 "read_multiple_files", "get_article", "get_summary", "get_document_text", "read_data_from_excel"}
+                 "read_multiple_files", "get_article", "get_summary", "get_document_text", "read_data_from_excel",
+                 "look_at_screen"}  # the screen can show anyone's words
 
 _PER_MINUTE = {CHANGE: 30, OUTWARD: 3}  # calibration knobs
 _recent: dict[int, deque] = {CHANGE: deque(), OUTWARD: deque()}
