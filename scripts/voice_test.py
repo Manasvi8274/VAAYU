@@ -171,6 +171,10 @@ def run(selected=None) -> list[dict]:
                    "paths": [t.get("path") for e in turns for t in e.get("trace", [])],
                    "stt_ms": [e.get("stt_ms") for e in events if e.get("kind") == "heard"],
                    "brain_ms": [e.get("brain_ms") for e in turns],
+                   "vaayu_first_sound_ms": [e.get("first_sound_ms") for e in turns],
+                   "vaayu_first_ack_ms": [e.get("first_ack_ms") for e in turns],
+                   "speak_ms": [e.get("speak_ms") for e in turns],
+                   "talked_over": [e.get("pauses") for e in events if e.get("kind") == "talked_over"],
                    "acks": [e.get("text") for e in events if e.get("kind") == "ack"],
                    "barge": [e.get("heard") for e in events if e.get("kind") == "barge_in"],
                    "other": sorted({e.get("kind") for e in events} - {"heard", "turn", "ack", "barge_in"}),
@@ -185,6 +189,8 @@ def run(selected=None) -> list[dict]:
             row["ok"] = ok
             results.append(row)
             print(f"{'OK ' if ok else 'BAD'} {name:18} first sound {[s['first_sound_s'] for s in step_rows]} "
+                  f"(his log: reply {row['vaayu_first_sound_ms']} ack {row['vaayu_first_ack_ms']} ms, "
+                  f"stt {row['stt_ms']} brain {row['brain_ms']} speak {row['speak_ms']}, pauses {row['talked_over']}) "
                   f"heard {row['heard']} -> {row['tools'] or row['paths']} | {[(r or '')[:70] for r in row['replies']]}",
                   flush=True)
             _ensure_quiet(mic, floor)

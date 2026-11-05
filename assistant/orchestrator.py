@@ -453,6 +453,7 @@ class Orchestrator:
             self._acks = getattr(self, "_acks", 0) + 1
             interaction_log.log_event("ack", text=text)
             self._speak(ack_for(text, self._acks))
+            self._ack_sound_at = getattr(getattr(self, "tts", None), "first_sound_at", 0.0) or 0.0
 
     def _speak_now(self, text: str) -> bool:
         stop, barge = threading.Event(), None
@@ -618,6 +619,7 @@ class Orchestrator:
                 self._busy = False
             return
         audio = self._capture_utterance()
+        self._heard_at = time.time()  # the user stopped talking (give or take the end-of-speech wait)
         if len(audio) == 0:
             return
         from assistant.tools import music
@@ -819,8 +821,14 @@ class Orchestrator:
                 interaction_log.log_event("reply_dropped", reply=reply, for_text=self._pending_text)
             else:
                 self._speak(reply)
+        # when the user heard something back (the ack or the reply): the number that matters (2-3 s rule)
+        heard_at, first = getattr(self, "_heard_at", 0.0), getattr(getattr(self, "tts", None), "first_sound_at", 0.0) or 0.0
+        first_sound_ms = round((first - heard_at) * 1000) if heard_at and first > heard_at else None
         interaction_log.log_event("turn", text=text, reply=reply, trace=self.brain.trace, brain_ms=brain_time.ms,
-                                  speak_ms=speak_time.ms, stt_ms=stt_time.ms, failed=error is not None)
+                                  speak_ms=speak_time.ms, stt_ms=stt_time.ms, failed=error is not None,
+                                  first_sound_ms=first_sound_ms,
+                                  first_ack_ms=round((self._ack_sound_at - heard_at) * 1000)
+                                  if getattr(self, "_ack_sound_at", 0) > heard_at > 0 else None)
 
     def run_forever(self) -> None:
         _media_monitor()  # start watching the sound level before the first command

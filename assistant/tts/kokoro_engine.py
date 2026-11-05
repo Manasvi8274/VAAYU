@@ -191,6 +191,7 @@ class KokoroEngine(TTSEngine):
         """pause_event: set while the user talks over him (audio/barge_in.py) - he goes quiet, and picks up again
         a little before where he stopped when it clears (unless stop_event is set meanwhile)."""
         from assistant.audio import echo_cancel
+        self.first_sound_at = 0.0
         if not text or not text.strip():
             return
         # Unbounded: a bounded queue left the producer blocked forever after a "stop" (replies are short).
@@ -210,6 +211,7 @@ class KokoroEngine(TTSEngine):
                 audio, rate = item
                 sd.play(audio, samplerate=rate)
                 echo_cancel.playing(audio, rate)  # the mic takes this back out
+                self.first_sound_at = self.first_sound_at or time.time()  # the orchestrator logs the wait
                 step = max(1, int(rate * chunk_seconds))
                 base, began = 0, time.perf_counter()  # where in `audio` the current play started, and when
                 while (pos := base + int((time.perf_counter() - began) * rate)) < len(audio):
