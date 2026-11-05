@@ -286,3 +286,35 @@ def test_pause_after_his_own_hold_says_paused_and_stays_paused(playing):
 def test_misheard_pause_over_music(said):
     from assistant.llm import router
     assert router.fast_route(said) == ("tools", [("control_media", {"action": "pause"})])
+
+
+def test_a_song_asked_again_needs_no_search_and_no_new_stream_link(monkeypatch):
+    # Measured: 1.7 s search + 2.7 s stream link before a song played.
+    import time as _t
+    from types import SimpleNamespace
+    from assistant.tools import music
+    calls = []
+
+    class FakeYDL:
+        def __init__(self, opts):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def extract_info(self, what, download=False):
+            calls.append(what)
+            if what.startswith("ytsearch"):
+                return {"entries": [{"id": "abc", "title": "Kesariya", "channel": "Sony", "duration": 240}]}
+            return {"url": f"https://x.googlevideo.com/v?expire={int(_t.time()) + 6 * 3600}&id=abc", "title": "Kesariya"}
+    monkeypatch.setitem(__import__("sys").modules, "yt_dlp", SimpleNamespace(YoutubeDL=FakeYDL))
+    for _ in range(2):
+        found = music._search("kesariya song")
+        music._resolve(found[0])
+    assert len(calls) == 2  # one search, one link - the second time both came from memory
+    music._streams["abc"]["url"] = "https://x.googlevideo.com/v?expire=1&id=abc"  # expired
+    music._resolve(found[0])
+    assert len(calls) == 3

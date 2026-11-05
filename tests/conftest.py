@@ -395,3 +395,12 @@ def _fresh_weather_cache():
     web_answer._places.clear()
     web_answer._forecasts.clear()
     yield
+
+
+@pytest.fixture(autouse=True)
+def _fresh_music_cache(tmp_path, monkeypatch):
+    # music keeps searches (data/music_searches.json) and stream links - each test starts without them.
+    from assistant.tools import music
+    monkeypatch.setattr(music, "SEARCH_FILE", tmp_path / "music_searches.json")
+    music._streams.clear()
+    yield

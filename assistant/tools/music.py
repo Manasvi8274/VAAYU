@@ -10,8 +10,10 @@ all work by voice (control_media routes here while this player is active),
 played feeds the taste history (youtube_taste) that recommendations use.
 """
 
+import json
 import re
 import shutil
+from pathlib import Path
 import threading
 import time
 
@@ -272,21 +274,70 @@ def _clean_query(query: str) -> str:
     return re.sub(r"\s+", " ", q).strip()
 
 
+# Speed (measured 2026-11-05): a song took 4.4 s to start - YouTube search 1.7 s + stream link 2.7 s. Searches are
+# kept for SEARCH_DAYS (data/music_searches.json), stream links until they expire (YouTube gives ~6 h), and the next
+# song's link is fetched while the current one plays - a song asked for again starts at once, "next" has no gap.
+SEARCH_FILE = Path(__file__).resolve().parent.parent.parent / "data" / "music_searches.json"
+SEARCH_DAYS = 7  # calibration knob
+_streams: dict[str, dict] = {}
+_cache_lock = threading.Lock()
+
+
 def _search(query: str, n: int = 8) -> list[dict]:
+    key = " ".join(query.lower().split())
+    try:
+        saved = json.loads(SEARCH_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        saved = {}
+    hit = saved.get(key)
+    if hit and time.time() - hit["at"] < SEARCH_DAYS * 86400:
+        return [dict(r) for r in hit["results"]]
     import yt_dlp
     with yt_dlp.YoutubeDL(_ydl_opts(extract_flat=True)) as y:
         info = y.extract_info(f"ytsearch{n}:{query}", download=False)
-    return [{"id": e["id"], "title": e.get("title") or "", "channel": e.get("channel") or e.get("uploader") or "",
-             "duration": e.get("duration") or 0} for e in info.get("entries") or [] if e.get("id")]
+    results = [{"id": e["id"], "title": e.get("title") or "", "channel": e.get("channel") or e.get("uploader") or "",
+                "duration": e.get("duration") or 0} for e in info.get("entries") or [] if e.get("id")]
+    if results:
+        with _cache_lock:
+            saved[key] = {"at": time.time(), "results": results}
+            if len(saved) > 500:
+                saved = dict(sorted(saved.items(), key=lambda kv: kv[1]["at"])[-500:])
+            try:
+                SEARCH_FILE.parent.mkdir(parents=True, exist_ok=True)
+                SEARCH_FILE.write_text(json.dumps(saved, ensure_ascii=False), encoding="utf-8")
+            except OSError:
+                pass
+    return results
+
+
+def _expires(url: str) -> float:
+    m = re.search(r"[?&]expire=(\d+)", url or "")
+    return float(m.group(1)) if m else 0.0
 
 
 def _resolve(track: dict) -> dict:
+    hit = _streams.get(track["id"])
+    if hit and _expires(hit["url"]) - time.time() > 600:  # good for 10 more minutes at least
+        return track | hit
     import yt_dlp
     with yt_dlp.YoutubeDL(_ydl_opts()) as y:
         info = y.extract_info(f"https://www.youtube.com/watch?v={track['id']}", download=False)
-    return track | {"url": info["url"], "title": info.get("title") or track["title"],
-                    "channel": info.get("channel") or info.get("uploader") or track.get("channel", ""),
-                    "duration": info.get("duration") or track.get("duration") or 0}
+    found = {"url": info["url"], "title": info.get("title") or track["title"],
+             "channel": info.get("channel") or info.get("uploader") or track.get("channel", ""),
+             "duration": info.get("duration") or track.get("duration") or 0}
+    _streams[track["id"]] = found
+    return track | found
+
+
+def _prefetch(candidates: list[dict]) -> None:
+    """The next song's stream link, fetched while this one plays."""
+    if candidates:
+        def go(c=dict(candidates[0])):
+            try:
+                _resolve(c)
+            except Exception:
+                pass
+        threading.Thread(target=go, daemon=True, name="music-prefetch").start()
 
 
 def _spoken(title: str) -> str:
@@ -317,6 +368,7 @@ def _play_first(candidates: list[dict], seconds: float | None = None) -> dict:
         player.play(track)
         player.stop_at = seconds
         _remember(track)
+        _prefetch(candidates)
         return track
     raise RuntimeError(f"None of the songs I found would play{f' ({last_error})' if last_error else ''}.")
 
