@@ -152,3 +152,15 @@ def test_room_noise_alone_never_becomes_an_utterance():
             return True
     seg = core.Segmenter(NoiseIsSpeech(), floor=100)
     assert not any(seg.feed(f) for f in _frames(110, 300))
+
+
+@pytest.mark.parametrize("text, confidence, again, killed", [
+    (" Vaayu die.", -0.43, None, True),            # a real one (measured -0.15..-0.54)
+    (" Vaayu die.", -0.65, "Like I said this is such a strange.", False),  # the prompt talking (real user clip)
+    (" Vaayu die.", -0.79, "Why you die?", True),  # unsure, but heard again without the prompt it is the phrase
+    (" Vaayu dies.  Kolavari.", -1.1, None, False),  # far too unsure
+    (" Vaayu die." * 40, -0.3, None, False),       # Whisper looping over a song (killed Vaayu mid-test)
+    (" Vaayu open notepad.", -0.2, None, False),
+])
+def test_a_kill_phrase_is_judged_by_how_sure_whisper_was(text, confidence, again, killed):
+    assert core.judge_kill(text, confidence, (lambda: again) if again else None) is killed

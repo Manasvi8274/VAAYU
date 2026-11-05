@@ -56,9 +56,40 @@ _DIE = r"(?:die|dye|dai|dies|died)"
 _KILL_RE = re.compile(rf"\b{_NAME}\s+{_DIE}\b")
 
 
+def _norm(text: str) -> str:
+    return re.sub(r"\s+", " ", re.sub(r"[^a-z' ]+", " ", (text or "").lower()))
+
+
 def is_kill_phrase(text: str) -> bool:
-    t = re.sub(r"[^a-z' ]+", " ", (text or "").lower())
-    return bool(_KILL_RE.search(re.sub(r"\s+", " ", t)))
+    return bool(_KILL_RE.search(_norm(text)))
+
+
+# False kills (measured 2026-11-05). The "Vaayu die." prompt that lets Whisper write the made-up name also makes it
+# write the phrase into unclear sound: in 466 of the user's real clips (none of them the phrase) 4 came out as
+# "Vaayu die." with the prompt ("Like I said this is such a strange.", "Hey hey hey hey hey."), 0 without - but
+# without it 4 of 6 real kill phrases were missed ("Waiodai.", "Why you die?"). And over a song Whisper looped:
+# "Vaayu die. Vaayu die. ..." x40 killed Vaayu mid-test. So the prompted hit is weighed by Whisper's own
+# confidence: real phrases scored -0.15..-0.54, the false ones -0.65..-1.42.
+_CONFIDENT = -0.6     # calibration knob: at least this sure -> kill
+_UNSURE = -0.9        # calibration knob: below this -> not the phrase; in between -> heard again without the prompt
+_MAX_REPEATS = 3      # "Vaayu die" more often than this in one short utterance = Whisper looping, not a person
+_LOOSE_KILL = re.compile(r"\b(?:why ?you|vaa?yu|vayu|wayu|viu|vio|waio|viyu)\W*(?:die|dai|dae|dye)\b|"
+                         r"\b(?:waio|viu|vayu|viyu)d(?:ai|ae|ie)\b", re.I)
+
+
+def judge_kill(text: str, confidence: float, heard_again=None) -> bool:
+    """Was it really the kill phrase? text/confidence: the prompted transcription; heard_again(): the same audio
+    without the prompt (only asked for when unsure)."""
+    if not is_kill_phrase(text):
+        return False
+    if len(_KILL_RE.findall(_norm(text))) > _MAX_REPEATS:
+        return False
+    if confidence >= _CONFIDENT:
+        return True
+    if confidence < _UNSURE or heard_again is None:
+        return False
+    second = heard_again()
+    return is_kill_phrase(second) or bool(_LOOSE_KILL.search(second or ""))
 
 
 def should_restart(crash_times: deque, now: float) -> bool:
@@ -244,8 +275,28 @@ def transcribe_short(model, audio: bytes) -> str:
     samples = np.frombuffer(audio, dtype=np.int16).astype(np.float32) / 32768.0
     peak = float(np.max(np.abs(samples))) or 1.0
     samples *= min(0.9 / peak, 20.0)  # quiet mic (35% here): boost before Whisper
-    segments, _ = model.transcribe(samples, language="en", beam_size=1, initial_prompt="Vaayu die.")
-    return " ".join(s.text for s in segments)
+    text, _confidence = _transcribe(model, samples, "Vaayu die.")
+    return text
+
+
+def _transcribe(model, samples, prompt):
+    segments = list(model.transcribe(samples, language="en", beam_size=1, initial_prompt=prompt,
+                                     condition_on_previous_text=False, max_new_tokens=40)[0])
+    text = " ".join(s.text for s in segments)
+    confidence = sum(s.avg_logprob for s in segments) / len(segments) if segments else -9.0
+    return text, confidence
+
+
+def kill_heard(model, audio: bytes) -> tuple[bool, str]:
+    """(really the kill phrase?, what was heard - for the log)."""
+    import numpy as np
+    samples = np.frombuffer(audio, dtype=np.int16).astype(np.float32) / 32768.0
+    peak = float(np.max(np.abs(samples))) or 1.0
+    samples *= min(0.9 / peak, 20.0)  # quiet mic (35% here): boost before Whisper
+    text, confidence = _transcribe(model, samples, "Vaayu die.")
+    again = []
+    ok = judge_kill(text, confidence, lambda: again.append(_transcribe(model, samples, None)[0]) or again[-1])
+    return ok, f"{text!r} ({confidence:.2f}" + (f", again: {again[0]!r}" if again else "") + ")"
 
 
 def _phrase_loop(trigger, stop: threading.Event) -> None:
@@ -281,13 +332,15 @@ def _phrase_loop(trigger, stop: threading.Event) -> None:
                     continue
                 if not audio:
                     continue
-                text = transcribe_short(model, audio)
+                killed, heard = kill_heard(model, audio)
                 if os.environ.get("GUARDIAN_DEBUG"):  # opt-in: what the listener heard, for tuning
-                    log.info("heard %r (noise floor %.0f)", text, seg.floor)
-                if is_kill_phrase(text):
-                    log.info("kill phrase heard: %r", text)
+                    log.info("heard %s (noise floor %.0f)", heard, seg.floor)
+                if killed:
+                    log.info("kill phrase heard: %s", heard)
                     trigger("phrase")
                     return
+                if "vaayu die" in heard.lower() or "vayu die" in heard.lower():
+                    log.info("not the kill phrase (Whisper unsure or looping): %s", heard)
     except Exception:
         log.exception('"Vaayu die" listener stopped - hotkey and shortcut still work')
 
