@@ -19,13 +19,19 @@ import threading
 
 import numpy as np
 
+from assistant.audio import echo_cancel
+
 STOP_PHRASE = re.compile(
     r"^(?:(?:hey|ok|okay|arre|arey|vaa?yu|vayu|bhai|please|no)\s+)*"
     r"(?:stop(?: it| that| talking| speaking| now| please)?|stop stop|b[au]s(?: karo| kar| kar do| bas)?|ruko|ruk jao|"
     r"chup(?: karo| ho jao| raho)?|shut up|enough|wait|quiet|be quiet|cancel|thik hai|theek hai|okay stop|ok stop|"
     r"hold on|never ?mind)(?:\s+(?:vaa?yu|vayu|bhai|please|yaar))*$", re.I)
 _GATE_MULTIPLIER = 1.3  # calibration knob: x the listener's normal speech gate while Vaayu talks
-_SPEECH_FRAMES = 4      # 120 ms of speech starts a capture (a short "stop." missed at 180) - and pauses him
+# 180 ms of speech starts a capture and pauses him. Voice test 2026-11-05: at 120 ms he paused for nobody in almost
+# every reply (his own voice leaking through the canceller as it adapts reached exactly 4 frames, never 6) - each
+# false pause cost ~1 s, replies took twice their length. (A short "stop." was once missed at 180 ms - before the
+# echo canceller; a real voice now comes through it whole.)
+_SPEECH_FRAMES = 6
 _END_SILENCE_FRAMES = 20  # 600 ms of quiet ends the sentence (he is quiet now - a whole command may follow)
 _MAX_FRAMES = 300       # 9 s
 # calibration knob: words of the user's own needed to cut Vaayu off (besides "stop" or his name). Real logs
@@ -106,6 +112,8 @@ class BargeIn:
                 return
             loud = self.listener._frame_rms(frame) >= gate
             voiced = loud and self.listener.vad.is_speech(frame.tobytes(), 16000)
+            if speech < _SPEECH_FRAMES and echo_cancel.settling():  # a sentence just started: not the user yet
+                voiced = False
             if speech < _SPEECH_FRAMES:
                 speech = speech + 1 if voiced else 0
                 buf = buf + [frame] if voiced else []

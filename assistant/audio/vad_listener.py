@@ -133,12 +133,13 @@ class VADListener:
             self._stream.close()
             self._stream = None
 
+    # Nothing queued is thrown away on mute/unmute/listen any more (voice test 2026-11-05: "give me a new one" and
+    # "what's on my screen", said while Vaayu was still thinking, were drained and lost). While he speaks, the mic
+    # goes to the barge-in tap, not the queue, so there is no stale echo to drop; what's queued is the user.
     def mute(self) -> None:
         self._muted = True
-        self._drain_queue()
 
     def unmute(self) -> None:
-        self._drain_queue()
         self._muted = False
 
     def _drain_queue(self) -> None:
@@ -217,5 +218,4 @@ class VADListener:
     def listen_for_utterance(self) -> np.ndarray:
         """Blocks until it detects speech followed by a run of silence, and
         returns the utterance as a float32 16kHz mono array."""
-        self._drain_queue()  # defensive: discard anything queued just before this call
         return self._segment(self._live_frames())

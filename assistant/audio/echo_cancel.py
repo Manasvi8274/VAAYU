@@ -24,6 +24,7 @@ _ref: np.ndarray | None = None  # what is playing now, 16 kHz int16
 _ref_start = 0.0
 _ref_end = 0.0  # when the last piece stopped: its echo still rings for TAIL seconds
 TAIL = 0.6  # calibration knob (seconds)
+SETTLE = 0.3  # calibration knob (seconds)
 _apm = None
 _failed = False
 _clock: float | None = None  # the mic's own sample clock (callbacks arrive in bursts; counting samples doesn't jitter)
@@ -46,6 +47,13 @@ def playing(audio: np.ndarray, rate: int, now: float | None = None) -> None:
     global _ref, _ref_start
     with _lock:
         _ref, _ref_start = _to16k(audio, rate), time.perf_counter() if now is None else now
+
+
+def settling(now: float | None = None) -> bool:
+    """A piece started playing under SETTLE seconds ago: the canceller is still adapting to it, and the little that
+    leaks through then looks like speech (measured 2026-11-05: the one false "user talking" in a reply came there)."""
+    now = time.perf_counter() if now is None else now
+    return _ref is not None and now - _ref_start < SETTLE
 
 
 def stopped(now: float | None = None) -> None:

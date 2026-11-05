@@ -34,6 +34,7 @@ to contain "Vaayu" alongside a control word.
 """
 
 import os
+import re
 import threading
 from pathlib import Path
 import time
@@ -255,6 +256,25 @@ def ack_now(text: str) -> bool:
 
 
 _TURN_LOCK = threading.Lock()
+
+# Everyday Hindi requests, in English - Whisper's own translation of short Hindi is unreliable (voice test 2026-11-05:
+# "ek chutkula sunao" -> "Why don't you just listen to me?", and Vaayu answered that).
+_HINDI_INTENTS = [(re.compile(p, re.I), english) for p, english in [
+    (r"\b(?:chut ?kula|chut ?kale|joke|jok)s? (?:suna(?:o|do|iye|na)|bata(?:o|do))\b", "Tell me a joke."),
+    (r"\b(?:ek|koi) aur (?:chut ?kula|joke)\b|\bdusra (?:chut ?kula|joke)\b", "Tell me another joke."),
+    (r"\b(?:kahani|kahaani|story) suna(?:o|do|iye)\b", "Tell me a short story."),
+    (r"\b(?:kya|kaise) (?:haal|hal)(?: chal)?(?: hai| hain)?\b|\bkaise ho\b|\bkaisa hai tu\b", "How are you?"),
+    (r"\b(?:kuch )?(?:accha|achha|acha) (?:sa )?(?:bolo|batao|suna(?:o|do))\b", "Say something nice to me."),
+    (r"\b(?:mujhe )?(?:bore|boring) (?:ho raha|lag raha)\b", "I'm bored."),
+    (r"\b(?:mera )?mood (?:kharab|off|kharaab) hai\b", "I'm in a bad mood."),
+    (r"\b(?:tum|aap|tu) kaun ho\b|\b(?:apna|aapka) naam (?:kya hai|batao)\b", "Who are you?"),
+    (r"\b(?:thank you|dhanyawad|shukriya)\b", "Thank you."),
+]]
+
+
+def hindi_intent(text: str) -> str | None:
+    t = (text or "").lower()
+    return next((english for pattern, english in _HINDI_INTENTS if pattern.search(t)), None)
 _CARRY_AFTER_NAME = 1.2  # calibration knob: seconds kept when the name pauses a song (the command's start)
 _YES = ["Yes?", "Yes, tell me.", "I'm listening.", "Go ahead."]
 
@@ -407,8 +427,8 @@ class Orchestrator:
         self._early = (len(audio), text)
         if not text.strip() or (self.state is State.SLEEPING and not is_name_mentioned(text)):
             return False
-        if is_name_mentioned(text) and not command_part(text):  # just "Vaayu": "Yes?" at once (voice test: 2.1 s)
-            return True
+        # (just "Vaayu" is NOT ended early: people pause after the name - voice test 2026-11-05, round 2: "Vaayu, how
+        # much battery do I have" split into "Vaayu." and a garbled rest said over his "Yes?")
         try:
             routed = router.fast_route(text_after_name(text) or text)
         except Exception:
@@ -474,6 +494,7 @@ class Orchestrator:
             if barge.heard and not is_stop(barge.heard, text):
                 # "give me a new one" said over a joke: it replaces the rest of this reply and runs next turn
                 self._pending_text = barge.heard
+                self.listener._drain_queue()  # its start may be queued too - it must not run a second time
         return stop.is_set()
 
     def _voice_confirm(self, name: str, arguments: dict) -> bool:
@@ -629,7 +650,7 @@ class Orchestrator:
         with _TURN_LOCK:
             if audio is not None and is_hindi(text) and hasattr(self.stt, "translate") and not router.fast_route(text):
                 try:
-                    english = self.stt.translate(audio)
+                    english = hindi_intent(text) or self.stt.translate(audio)
                 except Exception:
                     english = ""
                 if english:
@@ -753,7 +774,7 @@ class Orchestrator:
         if audio is not None and len(audio) and is_hindi(text) and hasattr(self.stt, "translate")                 and not router.fast_route(text):
             # Spoken Hindi: the brain gets it in English, the reply is translated back (brain.respond)
             try:
-                english = self.stt.translate(audio)
+                english = hindi_intent(text) or self.stt.translate(audio)
             except Exception:
                 english = ""
             if english:

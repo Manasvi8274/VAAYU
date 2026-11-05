@@ -221,3 +221,33 @@ def test_the_early_transcript_is_reused_when_nothing_more_was_said(monkeypatch):
     o.state = orchestrator.State.SLEEPING
     o.stt.transcribe.return_value = "open chrome"
     assert o._complete_command(audio) is False  # asleep: only with his name
+
+
+def test_his_own_voice_as_the_canceller_settles_never_pauses_him(monkeypatch):
+    # Voice test 2026-11-05: at 120 ms he paused for nobody in almost every reply (replies took twice their length).
+    from assistant.audio import barge_in
+    monkeypatch.setattr(barge_in.echo_cancel, "settling", lambda: True)
+    listener, stop = _Listener(), threading.Event()
+    b = barge_in.BargeIn(listener, MagicMock(), stop, "In Gurugram it's 29 degrees.")
+    for _ in range(10):
+        listener.tap(np.full(480, 3000, np.int16))
+    time.sleep(0.2)
+    assert not b.pause.is_set()
+    b.close()
+
+
+def test_what_the_user_says_while_he_thinks_is_kept():
+    # Voice test: "give me a new one" said while he was still thinking was thrown away.
+    from assistant.audio.vad_listener import VADListener
+    lst = VADListener()
+    lst._queue.put(np.full(480, 3000, np.int16))
+    lst.mute()
+    lst.unmute()
+    assert lst._queue.qsize() == 1
+
+
+@pytest.mark.parametrize("said, english", [("ek chut kula sunao", "Tell me a joke."), ("kya haal hai bhai", "How are you?"),
+                                           ("aaj mausam kaisa hai", None)])
+def test_everyday_hindi_requests_skip_the_unreliable_translation(said, english):
+    from assistant.orchestrator import hindi_intent
+    assert hindi_intent(said) == english
