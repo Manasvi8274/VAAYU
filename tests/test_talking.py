@@ -177,3 +177,47 @@ def test_slow_work_is_acknowledged_at_once_in_its_own_words():
     assert ack_now("what's the weather in delhi") and ack_for("what's the weather in delhi") == "Okay, checking the weather."
     assert not ack_now("open notepad")  # instant anyway
     assert not ack_now("tell me a joke")  # the brain - acknowledged only if it's slow (ACK_AFTER)
+
+
+# --- smart end of speech ------------------------------------------------------------------------------------------
+
+def _listener():
+    from assistant.audio.vad_listener import VADListener
+    lst = VADListener(silence_duration_ms=900)
+    lst._noise_floor_rms = 100.0
+    lst.vad = MagicMock()
+    lst.vad.is_speech.side_effect = lambda b, sr: np.abs(np.frombuffer(b, np.int16)).mean() > 300
+    return lst
+
+
+def _frames(speech=20, quiet=40):
+    return [np.full(480, 3000, np.int16)] * speech + [np.zeros(480, np.int16)] * quiet
+
+
+def test_a_complete_command_ends_after_the_short_silence():
+    lst, checks = _listener(), []
+    lst.early_end = lambda audio: checks.append(len(audio)) or True
+    audio = lst._segment(iter(_frames()))
+    quiet_kept = (len(audio) - 20 * 480) // 480
+    assert len(checks) == 1 and quiet_kept == 450 // 30  # stopped at 450 ms of silence, not 900
+
+
+def test_anything_else_waits_the_full_silence():
+    lst = _listener()
+    lst.early_end = lambda audio: False
+    audio = lst._segment(iter(_frames()))
+    assert (len(audio) - 20 * 480) // 480 == 900 // 30
+
+
+def test_the_early_transcript_is_reused_when_nothing_more_was_said(monkeypatch):
+    from assistant import orchestrator
+    o = orchestrator.Orchestrator.__new__(orchestrator.Orchestrator)
+    o.state, o.stt = orchestrator.State.AWAKE, MagicMock()
+    o.stt.transcribe.return_value = "open chrome"
+    audio = np.zeros(16000, np.float32)
+    assert o._complete_command(audio) is True
+    o.stt.transcribe.return_value = "tell me a joke"
+    assert o._complete_command(audio[:8000]) is False  # not a known command: keep listening
+    o.state = orchestrator.State.SLEEPING
+    o.stt.transcribe.return_value = "open chrome"
+    assert o._complete_command(audio) is False  # asleep: only with his name

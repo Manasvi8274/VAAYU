@@ -389,9 +389,28 @@ class Orchestrator:
 
     def _capture_utterance(self):
         if self.continuous:
+            self.listener.early_end = self._complete_command
             return self.listener.listen_for_utterance()
         self.activator.wait_for_trigger()
         return record(self.config.activation.record_seconds)
+
+    def _complete_command(self, audio) -> bool:
+        """Smart end of speech (audio/vad_listener.py): the sentence so far, transcribed once - is it already a whole
+        command Vaayu knows? Then he acts now instead of waiting out the silence. The transcript is kept: if the
+        user says nothing more, it is used as is (no second transcription)."""
+        from assistant.llm import router
+        try:
+            text = self.stt.transcribe(audio)
+        except Exception:
+            return False
+        self._early = (len(audio), text)
+        if not text.strip() or (self.state is State.SLEEPING and not is_name_mentioned(text)):
+            return False
+        try:
+            routed = router.fast_route(text_after_name(text) or text)
+        except Exception:
+            return False
+        return bool(routed) and routed[0] == "tools"
 
     def _set_state(self, new_state: "State") -> None:
         self.state = new_state
@@ -626,8 +645,14 @@ class Orchestrator:
             return reply
 
     def _handle_utterance(self, audio, heard: str | None = None) -> None:
+        early, self._early = getattr(self, "_early", None), None
         with Timer() as stt_time:
-            text = heard if heard is not None else self.stt.transcribe(audio)
+            if heard is not None:
+                text = heard
+            elif early and audio is not None and early[0] == len(audio):
+                text = early[1]  # transcribed at the early check, and nothing was said after it
+            else:
+                text = self.stt.transcribe(audio)
         audio_seconds = round(len(audio) / _SAMPLE_RATE, 1) if audio is not None else 0.0
         if not text.strip():
             interaction_log.log_event("heard_nothing", audio_seconds=audio_seconds, stt_ms=stt_time.ms,

@@ -81,6 +81,11 @@ class VADListener:
 
     tap = None  # set by orchestrator's barge-in while speaking; a callable(frame)
     on_speech_start = None  # called when an utterance starts (the "Yes?" he's saying stops for it)
+    # Smart end of speech (2026-11-05, "faster and faster"): after EARLY_SILENCE_MS of quiet, early_end(audio so far)
+    # may say the sentence is already a complete command ("pause", "open chrome") - then it ends there instead of
+    # after the full silence_duration_ms. None = always wait the full silence.
+    early_end = None
+    EARLY_SILENCE_MS = 450  # calibration knob
     _ring: "deque[np.ndarray]" = deque(maxlen=2000 // FRAME_MS)
     _interrupted = False
 
@@ -183,6 +188,9 @@ class VADListener:
                 else:
                     silence_run += 1
                     if silence_run >= self.silence_frames_threshold:
+                        break
+                    if (silence_run == self.EARLY_SILENCE_MS // FRAME_MS and self.early_end is not None
+                            and self.early_end(np.concatenate(buffer).flatten().astype(np.float32) / 32768.0)):
                         break
                 if frame_count >= self.max_frames:
                     break
