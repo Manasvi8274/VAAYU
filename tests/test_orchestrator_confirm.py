@@ -201,9 +201,9 @@ def test_while_media_plays_only_the_words_after_the_name_are_used(monkeypatch):
 
 def test_bare_name_during_media_opens_a_window_for_the_next_sentence(monkeypatch):
     orch = _awake("Vaayu", monkeypatch)
-    orch._listening_chime = MagicMock()
+    orch._say_yes = MagicMock()
     orch.handle_one_turn()
-    orch._listening_chime.assert_called_once()
+    orch._say_yes.assert_called_once()
     orch._speak.assert_not_called()
     orch.stt.transcribe.return_value = "volume 40"
     orch.handle_one_turn()

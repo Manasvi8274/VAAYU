@@ -55,7 +55,8 @@ def test_ack_words():
     from assistant.orchestrator import ack_for
     assert ack_for("play kesariya and set volume to 40") == "On it: playing kesariya, then volume to 40."
     assert ack_for("kya haal hai bhai") == "एक सेकंड भाई।"
-    assert ack_for("tell me about black holes", 1) == "One second."
+    assert ack_for("tell me a joke", 1) == "One second."
+    assert ack_for("tell me about black holes") == "Okay, let me check."  # a web lookup: in its own words
 
 
 def test_shortcuts_work_alone_and_as_steps():

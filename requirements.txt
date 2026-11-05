@@ -19,6 +19,7 @@ numpy
 faster-whisper
 pyttsx3
 webrtcvad-wheels  # provides the `webrtcvad` module; plain webrtcvad needs a C compiler on Windows
+livekit==1.2.0  # WebRTC echo canceller (AEC3) - his own voice out of the mic (assistant/audio/echo_cancel.py)
 
 # M4 - speaker verification (voice lock)
 resemblyzer

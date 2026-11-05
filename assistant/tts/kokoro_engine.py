@@ -32,6 +32,7 @@ from assistant.tts.base import TTSEngine
 MODEL_DIR = Path(__file__).resolve().parent.parent.parent / "models" / "kokoro"
 _SENTENCE = re.compile(r"(?<=[.!?।])\s+")  # "।" is Hindi's full stop
 _CLAUSE = re.compile(r"(?<=[,;:])\s+|\s+(?=- )")
+RESUME_BACK = 0.4  # calibration knob: seconds repeated when he carries on after a pause
 _CACHE_SIZE = 300
 _CACHE_MAX_CHARS = 80
 
@@ -162,8 +163,8 @@ class KokoroEngine(TTSEngine):
                         return
         threading.Thread(target=run, daemon=True, name="kokoro-prewarm").start()
 
-    def speak(self, text: str, stop_event=None) -> None:
-        self.speak_with_amplitude(text, stop_event=stop_event)
+    def speak(self, text: str, stop_event=None, pause_event=None) -> None:
+        self.speak_with_amplitude(text, stop_event=stop_event, pause_event=pause_event)
 
     def save_to_file(self, text: str, path: str) -> None:
         import soundfile as sf
@@ -171,7 +172,10 @@ class KokoroEngine(TTSEngine):
         sf.write(path, samples, rate)
 
     def speak_with_amplitude(self, text: str, on_amplitude: Callable[[float], None] | None = None,
-                             chunk_seconds: float = 0.03, stop_event=None) -> None:
+                             chunk_seconds: float = 0.03, stop_event=None, pause_event=None) -> None:
+        """pause_event: set while the user talks over him (audio/barge_in.py) - he goes quiet, and picks up again
+        a little before where he stopped when it clears (unless stop_event is set meanwhile)."""
+        from assistant.audio import echo_cancel
         if not text or not text.strip():
             return
         # Unbounded: a bounded queue left the producer blocked forever after a "stop" (replies are short).
@@ -190,16 +194,30 @@ class KokoroEngine(TTSEngine):
             while (item := ready.get()) is not None:
                 audio, rate = item
                 sd.play(audio, samplerate=rate)
+                echo_cancel.playing(audio, rate)  # the mic takes this back out
                 step = max(1, int(rate * chunk_seconds))
-                for pos in range(0, len(audio), step):
+                base, began = 0, time.perf_counter()  # where in `audio` the current play started, and when
+                while (pos := base + int((time.perf_counter() - began) * rate)) < len(audio):
                     if stop_event is not None and stop_event.is_set():  # the user said "stop"
                         sd.stop()
                         return
+                    if pause_event is not None and pause_event.is_set():  # the user is talking: quiet, listen
+                        sd.stop()
+                        echo_cancel.stopped()
+                        while pause_event.is_set() and not (stop_event is not None and stop_event.is_set()):
+                            time.sleep(0.02)
+                        if stop_event is not None and stop_event.is_set():
+                            return
+                        base, began = max(0, pos - int(rate * RESUME_BACK)), time.perf_counter()  # the cut-off word again
+                        sd.play(audio[base:], samplerate=rate)
+                        echo_cancel.playing(audio[base:], rate)
+                        continue
                     if on_amplitude is not None:
                         chunk = audio[pos:pos + step]
                         on_amplitude(float(np.sqrt(np.mean(chunk.astype(np.float64) ** 2))) if len(chunk) else 0.0)
                     time.sleep(chunk_seconds)
                 sd.wait()
         finally:
+            echo_cancel.stopped()
             if on_amplitude is not None:
                 on_amplitude(0.0)

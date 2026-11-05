@@ -1,12 +1,16 @@
 """
-"Stop" - or anything the user says - while Vaayu is talking: cut the reply off and listen.
+The user talking while Vaayu talks: he goes quiet at once, hears the whole sentence, then decides.
 
-While Vaayu speaks, the listener is muted (so it doesn't hear itself) and its
-mic frames are tapped here instead. A short burst of speech is transcribed;
-if it's a stop phrase - and not just Vaayu's own words coming back through
-the mic - the reply is stopped. The laptop's mic array cancels its own
-speaker output (measured earlier for the guardian), and the energy gate is
-set above the normal one, so Vaayu's voice rarely gets this far anyway.
+User (2026-11-05): "when I speak I want Vaayu to stop saying anything like in pause mode and then hear my voice
+first ... I said give me a joke, then while Vaayu is telling me a joke I tell him give me a new one - he
+understands it and accepts that command instead of the previous one".
+
+While Vaayu speaks, the listener is muted and its mic frames - with his own voice already taken out
+(audio/echo_cancel.py) - are tapped here instead. Speech starting sets `pause` (the TTS goes quiet, mid-word);
+the sentence is captured to its end and transcribed:
+  - a stop phrase, or a real sentence of the user's -> `stop` is set and `heard` kept (the orchestrator runs it
+    as the next command, in place of the rest of the reply)
+  - his own echo / a cough / "hmm" -> `pause` clears and he carries on from just before where he stopped.
 """
 
 import queue
@@ -21,14 +25,19 @@ STOP_PHRASE = re.compile(
     r"chup(?: karo| ho jao| raho)?|shut up|enough|wait|quiet|be quiet|cancel|thik hai|theek hai|okay stop|ok stop|"
     r"hold on|never ?mind)(?:\s+(?:vaa?yu|vayu|bhai|please|yaar))*$", re.I)
 _GATE_MULTIPLIER = 1.3  # calibration knob: x the listener's normal speech gate while Vaayu talks
-_SPEECH_FRAMES = 4      # 120 ms of speech starts a capture (a short "stop." missed at 180)
-_END_SILENCE_FRAMES = 10  # 300 ms of quiet ends it
-_MAX_FRAMES = 60        # 1.8 s: stop phrases are short
+_SPEECH_FRAMES = 4      # 120 ms of speech starts a capture (a short "stop." missed at 180) - and pauses him
+_END_SILENCE_FRAMES = 20  # 600 ms of quiet ends the sentence (he is quiet now - a whole command may follow)
+_MAX_FRAMES = 300       # 9 s
 # calibration knob: words of the user's own needed to cut Vaayu off (besides "stop" or his name). Real logs
 # (10-26..10-31): 13 cut-offs, every one his own voice garbled by the mic - "Merrick by c.", "You're a hero.",
 # "Yes code.", "By code deco." (2-3 words) - and the user said "I'm not able to listen to you sometimes in the
-# middle". 4 words keeps those out; a real sentence of the user's is longer.
+# middle". 4 words keeps those out (kept with the echo canceller too - those garbles were 3 words; short
+# follow-ups go by _FOLLOW_UP, short commands by the router).
 _MIN_WORDS = 4
+# short follow-ups that only make sense said to him mid-reply: "another one", "next one", "one more"
+_FOLLOW_UP = re.compile(r"^(?:(?:no|ok|okay|arre|bhai)\s+)*(?:(?:tell |give )?(?:me )?another(?: one)?|next(?: one)?|one more|new one|"
+                        r"something else|dusra|dusri|aur ek|ek aur|skip(?: it)?|louder|slower|faster|repeat(?: that)?)"
+                        r"(?:\s+(?:please|bhai|yaar|vaa?yu))*$", re.I)
 _NAME = re.compile(r"\b(?:vaa?yu|vayu|waayu|baayu)\b", re.I)
 _ECHO_SHARE = 0.6       # this share of the words found in what Vaayu is saying = his own echo
 
@@ -59,6 +68,8 @@ def should_interrupt(heard: str, speaking: str) -> bool:
     words = _words(heard).split()
     if _NAME.search(heard or "") and len(words) >= 2:  # "Vaayu, listen" - his name is never in his own replies
         return True
+    if _FOLLOW_UP.match(" ".join(words)):
+        return True
     if is_echo(heard, speaking) or len(words) < 2:
         return False
     if len((heard or '').split()) >= _MIN_WORDS:  # spoken words ("you're" is one)
@@ -68,10 +79,11 @@ def should_interrupt(heard: str, speaking: str) -> bool:
 
 
 class BargeIn:
-    """Runs while one reply is spoken; sets `stop` when the user says a stop phrase."""
+    """Runs while one reply is spoken: `pause` while the user talks, `stop` if what they said is for Vaayu."""
 
     def __init__(self, listener, stt, stop: threading.Event, speaking: str):
         self.listener, self.stt, self.stop, self.speaking = listener, stt, stop, speaking
+        self.pause = threading.Event()
         self.heard: str | None = None
         self._frames: "queue.Queue[np.ndarray | None]" = queue.Queue()
         self._thread = threading.Thread(target=self._run, daemon=True, name="barge-in")
@@ -80,6 +92,7 @@ class BargeIn:
 
     def close(self) -> None:
         self.listener.tap = None
+        self.pause.clear()
         self._frames.put(None)
         self._thread.join(timeout=2)
 
@@ -95,6 +108,8 @@ class BargeIn:
             if speech < _SPEECH_FRAMES:
                 speech = speech + 1 if voiced else 0
                 buf = buf + [frame] if voiced else []
+                if speech >= _SPEECH_FRAMES:
+                    self.pause.set()  # the user is talking: quiet, listen to all of it
                 continue
             buf.append(frame)
             silence = 0 if voiced else silence + 1
@@ -108,4 +123,5 @@ class BargeIn:
                     self.heard = text
                     self.stop.set()
                     return
+                self.pause.clear()  # a cough, "hmm", his own echo - carry on
                 buf, speech, silence = [], 0, 0

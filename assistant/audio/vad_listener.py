@@ -29,6 +29,7 @@ import numpy as np
 import sounddevice as sd
 import webrtcvad
 
+from assistant.audio import echo_cancel
 from assistant.audio.capture import SAMPLE_RATE
 
 FRAME_MS = 30
@@ -71,7 +72,7 @@ class VADListener:
         self._ring = deque(maxlen=2000 // FRAME_MS)
 
     def _callback(self, indata, _frames, _time_info, _status) -> None:
-        frame = indata.copy().flatten()
+        frame = echo_cancel.clean(indata.copy().flatten())  # Vaayu's own voice out (audio/echo_cancel.py)
         self._ring.append(frame)  # the last ~2 s, always - the name spotter reads it while a song plays
         if not self._muted:
             self._queue.put(frame)
@@ -79,6 +80,7 @@ class VADListener:
             self.tap(frame)
 
     tap = None  # set by orchestrator's barge-in while speaking; a callable(frame)
+    on_speech_start = None  # called when an utterance starts (the "Yes?" he's saying stops for it)
     _ring: "deque[np.ndarray]" = deque(maxlen=2000 // FRAME_MS)
     _interrupted = False
 
@@ -162,6 +164,8 @@ class VADListener:
                     if speech_frames_seen >= self.speech_start_frames:
                         in_speech = True
                         silence_run = 0
+                        if self.on_speech_start is not None:
+                            self.on_speech_start()
                         # Prepend the rolling pre-speech context, which was
                         # only accumulated while genuinely silent (see the
                         # else branch below), so there's no overlap/duplicate

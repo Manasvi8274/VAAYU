@@ -221,10 +221,57 @@ def ack_for(text: str, n: int = 0) -> str:
     from assistant.llm.ollama_client import is_hindi
     if routed and routed[0] == "tools" and routed[1][0][0] == "think_hard":
         return "मुझे ठीक से सोचने दो।" if is_hindi(text) else "Let me think about that properly."
+    if (slow := _slow_step(routed)) and not is_hindi(text):
+        return slow
     return "एक सेकंड भाई।" if is_hindi(text) else _ACKS[n % 2]
 
 
-_COMMON_REPLIES = _ACKS + ["Yes? I'm listening.", "Yes?", "Okay.", "Playing.", "Paused.", "Okay, no problem.", "You're welcome!",
+# User (2026-11-05): "he should acknowledge me when I end my command, like 'ok, checking' while he checks - simple
+# human to human talk". Work that always takes a few seconds is answered at once, not after ACK_AFTER.
+_SLOW_STEPS = {"get_weather": "Okay, checking the weather.", "answer_question": "Okay, let me check.",
+               "play_music": "Okay, finding it.", "play_video_on_youtube": "Okay, finding the video.",
+               "play_latest_video_from_channel": "Okay, finding the latest one.",
+               "play_recommended": "Okay, finding something.", "think_hard": "Let me think about that properly."}
+
+
+def _slow_step(routed) -> str | None:
+    if routed and routed[0] == "tools" and len(routed[1]) == 1:
+        return _SLOW_STEPS.get(routed[1][0][0])
+    return None
+
+
+def ack_now(text: str) -> bool:
+    """Known-slow work (a web lookup, finding a song): acknowledged the moment the command ends."""
+    from assistant.llm import router
+    try:
+        return _slow_step(router.fast_route(text)) is not None
+    except Exception:
+        return False
+
+
+_YES = ["Yes?", "Yes, tell me.", "I'm listening.", "Go ahead."]
+
+
+def _without_echo(text: str, said: str) -> str:
+    """`text` without `said` at its start ("Yes? Play Bang Bang" -> "Play Bang Bang")."""
+    import re
+    spoken = re.findall(r"[a-z']+", said.lower())
+    words = text.split()
+    heard = [re.sub(r"[^a-z']", "", w.lower()) for w in words]
+    if spoken and heard[:len(spoken)] == spoken:
+        return " ".join(words[len(spoken):]).strip(" ,.")
+    return text
+
+
+def _can_pause(tts) -> bool:
+    import inspect
+    try:
+        return "pause_event" in inspect.signature(tts.speak).parameters
+    except (TypeError, ValueError):
+        return False
+
+
+_COMMON_REPLIES = _ACKS + list(_SLOW_STEPS.values()) + _YES + ["Yes? I'm listening.", "Yes?", "Okay.", "Playing.", "Paused.", "Okay, no problem.", "You're welcome!",
                    "Opened Brave.", "Opened WhatsApp.", "Sorry, I didn't get that - could you say it again?"]
 
 
@@ -369,14 +416,16 @@ class Orchestrator:
         from assistant.tools import music
         music.hold_for_speech()  # Vaayu or the song, never both - the song waits while he talks
         try:
+            # he goes quiet while the user talks over him (the Kokoro engine can pick up again; others just stop)
+            hold = {"pause_event": barge.pause} if barge and _can_pause(self.tts) else {}
             if self.gui_queue is not None:
                 self.tts.speak_with_amplitude(
                     text,
                     on_amplitude=lambda v: self.gui_queue.put({"kind": "amplitude", "value": v}),
-                    **({"stop_event": stop} if barge else {}),
+                    **({"stop_event": stop, **hold} if barge else {}),
                 )
             elif barge:
-                self.tts.speak(text, stop_event=stop)
+                self.tts.speak(text, stop_event=stop, **hold)
             else:
                 self.tts.speak(text)
         finally:
@@ -392,9 +441,9 @@ class Orchestrator:
             interaction_log.log_event("barge_in", heard=barge.heard, was_saying=text)
             self._name_window_until = time.time() + _NAME_WINDOW_SECONDS  # the next sentence is for Vaayu
             from assistant.audio.barge_in import is_stop
-            from assistant.llm import router
-            if barge.heard and not is_stop(barge.heard, text) and router.fast_route(barge.heard):
-                self._pending_text = barge.heard  # "open chrome" said over him: the next turn runs it
+            if barge.heard and not is_stop(barge.heard, text):
+                # "give me a new one" said over a joke: it replaces the rest of this reply and runs next turn
+                self._pending_text = barge.heard
         return stop.is_set()
 
     def _voice_confirm(self, name: str, arguments: dict) -> bool:
@@ -456,21 +505,34 @@ class Orchestrator:
             self._set_state(State.AWAKE)
         self._name_window_until = time.time() + _NAME_WINDOW_SECONDS + 4  # the next sentence is for Vaayu
         interaction_log.log_event("name_over_music", heard=heard)
-        self._listening_chime()
+        self._say_yes()
 
-    def _listening_chime(self) -> None:
-        """A short soft tone when only his name was said, instead of "Yes?": people go straight on with the
-        command, and Vaayu's mic is deaf while he talks - real log: "play the Bollywood song Bang Bang" arrived as
-        "Bollywood song with", its start said over his "Yes?". A tone doesn't take the mic away."""
-        try:
-            import numpy as np
-            import sounddevice as sd
-            rate = 48000
-            t = np.arange(int(rate * 0.16)) / rate
-            tone = 0.12 * np.sin(2 * np.pi * 880 * t) * np.hanning(len(t))  # calibration knob: loudness 0.12
-            sd.play(tone.astype(np.float32), rate)  # not waited on - the mic stays open
-        except Exception:
-            pass
+    def _say_yes(self) -> None:
+        """Only his name was said: "Yes?", like a person (user, 2026-11-05: "when I say Vaayu he says nothing
+        back, just a beep"). Said WITHOUT taking the mic away - real log: "play the Bollywood song Bang Bang"
+        arrived as "Bollywood song with", its start said over a "Yes?" while the mic was deaf. So it plays in the
+        background while the listener keeps listening (his voice taken out by audio/echo_cancel.py), and stops
+        the moment the user starts talking."""
+        self._yes_n = getattr(self, "_yes_n", -1) + 1
+        said = _YES[self._yes_n % len(_YES)]
+        self._said_yes = (said, time.time())
+        print(f"Vaayu: {said}")
+        stop = threading.Event()
+
+        def run():
+            if not _SPEAK_LOCK.acquire(timeout=2):
+                return
+            try:
+                if self.continuous:
+                    self.listener.on_speech_start = stop.set
+                self.tts.speak(said, stop_event=stop)
+            except Exception:
+                pass
+            finally:
+                if self.continuous:
+                    self.listener.on_speech_start = None
+                _SPEAK_LOCK.release()
+        threading.Thread(target=run, daemon=True, name="say-yes").start()
 
     def _watch_stop_request(self) -> None:
         """The "Stop Vaayu" shortcut (assistant/stop.py): finish the current turn, say goodbye, exit 0 -
@@ -523,6 +585,12 @@ class Orchestrator:
                                       state=self.state.value)
             return
 
+        said_yes, self._said_yes = getattr(self, "_said_yes", ("", 0.0)), ("", 0.0)
+        if said_yes[0] and time.time() - said_yes[1] < 15:
+            text = _without_echo(text, said_yes[0])
+            if not text:
+                return  # only his own "Yes?" came back
+
         print(f"You said: {text}")
         interaction_log.log_event("heard", text=text, state=self.state.value, audio_seconds=audio_seconds,
                                   stt_ms=stt_time.ms, audio_file=_save_audio(audio) if audio is not None else None)
@@ -560,8 +628,7 @@ class Orchestrator:
             self._set_state(State.AWAKE)
             if not has_command_content(text):
                 # bare "wake up Vaayu" / "Vaayu" - nothing else to act on
-                print("Vaayu: Yes? I'm listening.")
-                self._listening_chime()
+                self._say_yes()
                 self._name_window_until = time.time() + _NAME_WINDOW_SECONDS
                 return
             # else: "Vaayu, open brave" style - wake AND handle the attached
@@ -581,7 +648,7 @@ class Orchestrator:
             else:
                 rest = command_part(text)
                 if not rest:
-                    self._listening_chime()
+                    self._say_yes()
                     self._name_window_until = time.time() + _NAME_WINDOW_SECONDS
                     interaction_log.log_event("name_only_media", text=text)
                     return
@@ -590,13 +657,14 @@ class Orchestrator:
 
         if self.state is State.AWAKE and is_name_mentioned(text) and not command_part(text):
             # just "Hey Vaayu" while awake - real log: it went to the chat model, 19.6 s for "Heyyaar, kya problem hai?"
-            self._listening_chime()
+            self._say_yes()
             self._name_window_until = time.time() + _NAME_WINDOW_SECONDS
             interaction_log.log_event("name_only", text=text)
             return
 
         from assistant.llm.ollama_client import is_hindi
         from assistant.llm import router
+        said_hindi = ""
         # (a command Vaayu already knows is used as said - "play song jeene ki hai 4 din" must keep its Hindi title)
         if audio is not None and len(audio) and is_hindi(text) and hasattr(self.stt, "translate")                 and not router.fast_route(text):
             # Spoken Hindi: the brain gets it in English, the reply is translated back (brain.respond)
@@ -606,12 +674,13 @@ class Orchestrator:
                 english = ""
             if english:
                 interaction_log.log_event("hindi", heard=text, english=english)
-                text, self.brain.reply_in_hindi = english, True
+                said_hindi, text, self.brain.reply_in_hindi = text, english, True
         self.messages.append({"role": "user", "content": text})
         self.brain.trace = []
         error = None
         started, self._turn_done = time.time(), False
-        ack = threading.Timer(ACK_AFTER, self._ack_if_slow, args=(text, started))
+        ack_text = said_hindi or text
+        ack = threading.Timer(0.0 if ack_now(text) else ACK_AFTER, self._ack_if_slow, args=(ack_text, started))
         ack.daemon = True
         ack.start()
         with Timer() as brain_time:
@@ -638,7 +707,10 @@ class Orchestrator:
             memory.learn_async(self.brain.client, self.brain.model, text, reply)
         print(f"Assistant: {reply}")
         with Timer() as speak_time:
-            self._speak(reply)
+            if getattr(self, "_pending_text", None):  # cut off during "One second." by a new command: that wins
+                interaction_log.log_event("reply_dropped", reply=reply, for_text=self._pending_text)
+            else:
+                self._speak(reply)
         interaction_log.log_event("turn", text=text, reply=reply, trace=self.brain.trace, brain_ms=brain_time.ms,
                                   speak_ms=speak_time.ms, stt_ms=stt_time.ms, failed=error is not None)
 

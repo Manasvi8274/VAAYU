@@ -41,7 +41,7 @@ class _Listener:
         return float(np.sqrt(np.mean(frame.astype(np.float64) ** 2)))
 
 
-def _feed(listener, loud_frames=12, quiet_frames=12):
+def _feed(listener, loud_frames=12, quiet_frames=25):  # 600 ms of quiet ends a sentence
     for _ in range(loud_frames):
         listener.tap(np.full(480, 3000, np.int16))
     for _ in range(quiet_frames):

@@ -216,10 +216,12 @@ def _no_real_claude_thinking():
 
 @pytest.fixture(autouse=True, scope="session")
 def _no_real_chime():
-    # The listening tone plays on the real speakers.
+    # "Yes?" to his name is said from a thread of its own - on the real speakers if a test has a real voice.
+    # The real one stays reachable for its own test (tests/test_talking.py).
     from assistant import orchestrator
     with pytest.MonkeyPatch.context() as mp:
-        mp.setattr(orchestrator.Orchestrator, "_listening_chime", lambda self: None)
+        mp.setattr(orchestrator, "REAL_SAY_YES", orchestrator.Orchestrator._say_yes, raising=False)
+        mp.setattr(orchestrator.Orchestrator, "_say_yes", lambda self: None)
         yield
 
 
