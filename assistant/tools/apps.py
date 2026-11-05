@@ -2,6 +2,7 @@ import contextlib
 import re
 import io
 import subprocess
+import threading
 import time
 import urllib.request
 
@@ -339,8 +340,10 @@ def _close_tracked(app_name: str, force: bool = False) -> str:
     if still_up():
         raise RuntimeError(f"{app_name} is still open - it may be asking you to save something. "
                            f"Say 'force close {app_name}' to close it anyway.")
-    time.sleep(0.5)
-    _end(pids)  # its own processes, windowless now (tray, background, a Store app's process)
+    def tidy():  # its own processes, windowless now (tray, background, a Store app's process) - after the reply
+        time.sleep(0.5)
+        _end(pids)
+    threading.Thread(target=tidy, daemon=True, name="close-tidy").start()
     _OPENED.pop(entry["key"], None)
     return f"Closed {app_name}."
 
@@ -353,8 +356,18 @@ def _start_menu_apps() -> dict[str, str]:
     """Windows' live Start-menu list: name -> AppID (an app path, a store id, or a
     URL like steam://rungameid/389730 for Steam games)."""
     global _START_APPS_CACHE
-    if _START_APPS_CACHE and time.time() - _START_APPS_CACHE[0] < _START_APPS_MAX_AGE:
+    if _START_APPS_CACHE:
+        if time.time() - _START_APPS_CACHE[0] >= _START_APPS_MAX_AGE:
+            # old: answer with it now, re-read in the background (voice test 2026-11-05: the 1.1 s PowerShell call
+            # made "open notepad" take 3.3 s)
+            _START_APPS_CACHE = (time.time(), _START_APPS_CACHE[1])
+            threading.Thread(target=_read_start_menu, daemon=True, name="start-apps").start()
         return _START_APPS_CACHE[1]
+    return _read_start_menu()
+
+
+def _read_start_menu() -> dict[str, str]:
+    global _START_APPS_CACHE
     import json
     out = subprocess.run(["powershell", "-NoProfile", "-Command",
                           "Get-StartApps | ConvertTo-Json -Compress"], capture_output=True, text=True,

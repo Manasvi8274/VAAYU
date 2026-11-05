@@ -255,6 +255,7 @@ def ack_now(text: str) -> bool:
 
 
 _TURN_LOCK = threading.Lock()
+_CARRY_AFTER_NAME = 1.2  # calibration knob: seconds kept when the name pauses a song (the command's start)
 _YES = ["Yes?", "Yes, tell me.", "I'm listening.", "Go ahead."]
 
 
@@ -406,6 +407,8 @@ class Orchestrator:
         self._early = (len(audio), text)
         if not text.strip() or (self.state is State.SLEEPING and not is_name_mentioned(text)):
             return False
+        if is_name_mentioned(text) and not command_part(text):  # just "Vaayu": "Yes?" at once (voice test: 2.1 s)
+            return True
         try:
             routed = router.fast_route(text_after_name(text) or text)
         except Exception:
@@ -461,6 +464,8 @@ class Orchestrator:
                 _monitor.suppress_until = time.time() + 0.6  # the speaker's tail after playback ends
             if self.continuous:
                 self.listener.unmute()
+        if barge is not None and getattr(barge, "pauses", None):
+            interaction_log.log_event("talked_over", pauses=barge.pauses, was_saying=text, stopped=stop.is_set())
         if stop.is_set():
             print(f"Vaayu: (stopped - heard {barge.heard!r})")
             interaction_log.log_event("barge_in", heard=barge.heard, was_saying=text)
@@ -525,7 +530,7 @@ class Orchestrator:
         recording, and ask - the command then comes in without the song over it."""
         from assistant.tools import music
         music.hold_for_listening()
-        self.listener.interrupt()
+        self.listener.interrupt(keep_seconds=_CARRY_AFTER_NAME)
         if self.state is State.SLEEPING:
             self._set_state(State.AWAKE)
         self._name_window_until = time.time() + _NAME_WINDOW_SECONDS + 4  # the next sentence is for Vaayu
@@ -818,6 +823,8 @@ class Orchestrator:
         from assistant import agent, proactive
         agent.ANNOUNCE = self._speak
         proactive.start(self._speak, busy=lambda: self._busy)  # welcome backs, breaks, late nights - if turned on
+        from assistant.tools import apps  # the Start-menu list read now (1.1 s), not on the first "open ..."
+        threading.Thread(target=apps._start_menu_apps, daemon=True, name="start-apps").start()
         from assistant.tools import web_answer  # the usual place's weather, fetched ahead of time
         threading.Thread(target=web_answer.keep_weather_fresh, daemon=True, name="weather-fresh").start()
         from assistant import phone  # the phone (Telegram), if the user made a bot - data/telegram.json

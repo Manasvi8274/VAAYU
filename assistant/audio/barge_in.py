@@ -85,6 +85,7 @@ class BargeIn:
         self.listener, self.stt, self.stop, self.speaking = listener, stt, stop, speaking
         self.pause = threading.Event()
         self.heard: str | None = None
+        self.pauses: list[str] = []  # what was heard each time he went quiet (logged by the orchestrator)
         self._frames: "queue.Queue[np.ndarray | None]" = queue.Queue()
         self._thread = threading.Thread(target=self._run, daemon=True, name="barge-in")
         listener.tap = self._frames.put
@@ -123,5 +124,6 @@ class BargeIn:
                     self.heard = text
                     self.stop.set()
                     return
+                self.pauses.append(text)
                 self.pause.clear()  # a cough, "hmm", his own echo - carry on
                 buf, speech, silence = [], 0, 0

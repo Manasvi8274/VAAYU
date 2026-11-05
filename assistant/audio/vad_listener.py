@@ -96,10 +96,15 @@ class VADListener:
             return np.zeros(0, dtype=np.float32)
         return np.concatenate(frames).astype(np.float32) / 32768.0
 
-    def interrupt(self) -> None:
-        """End the utterance being collected now, with nothing - the song was just paused because the
-        name was heard, so what follows (the command) should be captured fresh, without the music."""
+    def interrupt(self, keep_seconds: float = 0.0) -> None:
+        """End the utterance being collected now - the song was just paused because the name was heard, so what
+        follows (the command) is captured fresh, without the music. keep_seconds: the last moments are carried into
+        the next utterance - voice test 2026-11-05: "Vaayu, open bluetooth settings" said in one breath over a song
+        lost everything after the name."""
+        self._carry = list(self._ring)[-int(keep_seconds * 1000 / FRAME_MS):] if keep_seconds > 0 else []
         self._interrupted = True
+
+    _carry: list = []
 
     def start(self) -> None:
         self._stream = sd.InputStream(
@@ -155,6 +160,8 @@ class VADListener:
         frame_count = 0
         energy_gate = self._noise_floor_rms * self.energy_threshold_multiplier
 
+        if self._carry and not self._interrupted:  # the start of a command said right after the name
+            buffer, in_speech, self._carry = list(self._carry), True, []
         for frame in frames:
             if self._interrupted:
                 self._interrupted = False

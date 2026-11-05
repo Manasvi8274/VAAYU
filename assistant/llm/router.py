@@ -304,7 +304,7 @@ _LOCK = re.compile(r"^lock(?: (?:my|the))? (?:computer|laptop|pc|screen|system)$
 _MINIMIZE = re.compile(r"^minimi[sz]e(?: (?:this|it|this window|the window|current window))?$|^(?:ye|isko|this) minimi[sz]e (?:karo|kar do)$", re.I)
 # Date/time come from the clock, never the model: real log - "what is date today monday tuesday..." went
 # to the chat model, which said Monday on a Sunday, flip-flopped, and once answered "[current time]".
-_TIME = re.compile(r"^(?:what(?:'s| is)(?: the)?(?: current| exact)? time(?: now| right now| currently| it is| is it)?|"
+_TIME = re.compile(r"^(?:(?:what(?:'s| is)|watch|what|whats|wats)(?: the)?(?: current| exact)? time(?: now| right now| currently| it is| is it)?|"
                    r"what time is it(?: now| right now)?|(?:the )?current time|time now|"
                    r"(?:tell me|say)(?: the)?(?: current)? time|time (?:kya hai|kya hua|batao|please|bata do)|"
                    r"kitne baje(?: hai[n]?| hue| hain)?|kya time (?:hai|hua)|abhi kya time hai|samay kya hai|"
