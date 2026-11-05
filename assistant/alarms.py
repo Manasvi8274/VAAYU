@@ -70,6 +70,19 @@ def set_alarm(when: str, label: str = "") -> str:
     return _add(at, "alarm", label)
 
 
+def set_reminder(what: str, when: str = "", minutes: int = 0) -> str:
+    """'Remind me to call mom at 5 pm' / 'in 20 minutes': said once at that time ("Reminder: call mom.")."""
+    what = what.strip(" .")
+    if not what:
+        raise ValueError("What should I remind you about?")
+    at = datetime.now() + timedelta(minutes=minutes) if minutes else parse_time(when)
+    yours = re.sub(r"\b(my|me|i)\b", lambda m: {"my": "your", "me": "you", "i": "you"}[m.group(1).lower()], what,
+                   flags=re.I)  # "take my medicine" -> "take your medicine"
+    _add(at, "reminder", yours)  # said as "Reminder: take your medicine."
+    day = "today" if at.date() == datetime.now().date() else "tomorrow"
+    return f"Okay, I'll remind you to {yours} at {at:%I:%M %p} {day}.".replace(" 0", " ")
+
+
 def set_timer(seconds: int, label: str = "") -> str:
     if seconds <= 0:
         raise ValueError("How long should the timer be?")
@@ -159,6 +172,10 @@ def due() -> dict | None:
     return None
 
 
+def reminder_text(alarm: dict) -> str:
+    return f"Reminder: {alarm.get('label') or 'you asked me to remind you now'}."
+
+
 def start_scheduler(speak, set_volume=None) -> None:
     """Background loop: when an alarm is due, call out until dismissed (or 30 min)."""
     def loop():
@@ -168,6 +185,9 @@ def start_scheduler(speak, set_volume=None) -> None:
             if _ringing is None:
                 alarm = due()
                 if alarm is None:
+                    continue
+                if alarm["kind"] == "reminder":  # said once - not a call-out until "I'm awake"
+                    speak(reminder_text(alarm))
                     continue
                 _ringing, _ring_started = alarm, time.time()
                 restore = set_volume(_MIN_VOLUME) if set_volume else None

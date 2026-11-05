@@ -254,8 +254,6 @@ _REFUSE = [
      "I can't send emails yet."),
     (re.compile(r"^(?:call|phone|dial|ring|make a (?:phone )?call)\b|\bko (?:call|phone) (?:karo|kar do|lagao)\b", re.I),
      "I can't make phone calls."),
-    (re.compile(r"\b(?:set|create) (?:an? )?reminder\b", re.I),  # alarms and timers work now (assistant/alarms.py)
-     "I can't set reminders yet - I can set an alarm or a timer, or save a note."),
     (re.compile(r"\b(?:paytm|phonepe|phone pe|gpay|google pay|upi|bhim|send money|transfer money|transfer \d+|"
                 r"pay \d+|pay (?:rs|rupees|money)|make (?:a )?payment|net ?banking|bank account|credit card|debit card)\b"
                 r"|\bpay (?:my |the )?\w* ?bill\b", re.I),
@@ -522,7 +520,22 @@ def _tab_target(q: str, tool: str):
     return ("tool", tool, {"query": q})
 
 
+def _route_remind(t: str):
+    """"Remind me to call mom at 5 pm" / "in 20 minutes" / "5 baje mom ko call karna yaad dila dena"."""
+    for pattern in _REMIND:
+        if m := pattern.match(t):
+            what = m.group("w").strip(" .")
+            if m.groupdict().get("n"):
+                n = int(m.group("n")) if m.group("n").isdigit() else _NUM_WORDS.get(m.group("n").lower(), 1)
+                minutes = n * (60 if m.group("u").lower().startswith("h") else 1)
+                return ("tool", "set_reminder", {"what": what, "minutes": minutes})
+            return ("tool", "set_reminder", {"what": what, "time": m.group("t").strip()})
+    return None
+
+
 def _route_alarm(t: str):
+    if routed := _route_remind(t):
+        return routed
     from assistant import alarms
     if alarms.is_ringing() and (alarms.is_ack(t) or alarms.snooze_minutes(t)):  # "I'm awake" / "5 more minutes"
         return ("tool", "stop_alarm", {"said": t})
@@ -547,6 +560,14 @@ _TIME_SAID = r"\d{1,2}(?:[:.]\d{2})?(?:\s*(?:am|pm|a\.?m\.?|p\.?m\.?|baje|o'?clo
 _ALARM = re.compile(rf"\b(?:set|put|keep|create)?(?: me)?(?: an?)? ?alarm(?: to wake me(?: up)?)?(?: for| at)? (?P<t>{_TIME_SAID})\b|"
                     rf"\bwake me(?: up)?(?: at| by)? (?P<t2>{_TIME_SAID}|half past \d{{1,2}}(?: in the morning)?)\b|"
                     rf"\b(?P<t3>{_TIME_SAID}) (?:ka|ki|par|pe) alarm (?:laga|set) (?:do|karo|de)\b", re.I)
+_IN_UNITS = r"(?P<n>\d+|a|an|one|two|five|ten|fifteen|twenty|thirty) (?P<u>minutes?|mins?|hours?)"
+_REMIND = [re.compile(p, re.I) for p in [
+    rf"^(?:please )?remind me (?:to |about |that )?(?P<w>.+?) (?:at|by) (?P<t>{_TIME_SAID})$",
+    rf"^(?:please )?remind me (?:at|by) (?P<t>{_TIME_SAID}) (?:to|about|that) (?P<w>.+)$",
+    rf"^(?:please )?remind me in {_IN_UNITS} (?:to|about|that) (?P<w>.+)$",
+    rf"^(?:please )?remind me (?:to |about |that )?(?P<w>.+?) in {_IN_UNITS}$",
+    rf"^(?P<t>{_TIME_SAID}) (?:baje )?(?P<w>.+?) (?:yaad dila(?:na| dena| do| dijiye)?|remind (?:karna|kar dena))$",
+]]
 _TIMER = re.compile(r"\b(?:set|start|put|keep)?(?: an?| me)? ?timer (?:for |of )?(?P<n>\d+|a|one|two|five|ten|fifteen|twenty|thirty) "
                     r"(?P<u>seconds?|secs?|minutes?|mins?|hours?)\b|"
                     r"\b(?P<n2>\d+) (?P<u2>minute|minutes|second|seconds) (?:ka|ki) timer\b", re.I)
@@ -1268,7 +1289,7 @@ DIRECT_REPLY_TOOLS = {
     "close_browser_tab", "switch_to_browser_tab", "type_text", "send_whatsapp_message",
     "move_status_orb", "set_daily_update_time", "open_website", "get_system_status", "set_radio", "get_weather", "review_logs",
     "app_click", "app_menu", "app_type", "app_keys",  # mcp_servers/windows_apps.py: "Clicked Save in Untitled - Notepad."
-    "get_new_ability", "daily_briefing", "design_image", "design_logo", "design_poster", "design_diagram", "design_presentation",
+    "get_new_ability", "daily_briefing", "set_reminder", "design_image", "design_logo", "design_poster", "design_diagram", "design_presentation",
     "design_document", "add_task", "complete_task", "make_plan", "plan_my_day", "think_deeply", "think_hard", "list_tasks",
 }
 

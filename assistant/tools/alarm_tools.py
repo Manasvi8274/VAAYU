@@ -16,6 +16,19 @@ def set_alarm(time: str, label: str = "") -> str:
 
 
 @registry.register(
+    name="set_reminder",
+    description="Remind the user of something at a time ('remind me to call mom at 5 pm') or in some minutes "
+                "('remind me in 20 minutes to drink water'). what: the thing, in their words.",
+    parameters={"type": "object", "properties": {"what": {"type": "string"}, "time": {"type": "string"},
+                                                 "minutes": {"type": "integer"}}, "required": ["what"]},
+)
+def set_reminder(what: str, time: str = "", minutes: int = 0) -> str:
+    if not time and not minutes:
+        raise ValueError("When should I remind you?")
+    return alarms.set_reminder(what, time, int(minutes or 0))
+
+
+@registry.register(
     name="set_timer",
     description="Set a timer for a number of seconds (10 minutes = 600).",
     parameters={"type": "object", "properties": {"seconds": {"type": "integer"}, "label": {"type": "string"}},

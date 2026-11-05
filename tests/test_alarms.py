@@ -55,3 +55,25 @@ def test_five_more_minutes_snoozes():
     alarms._ringing = {"kind": "alarm", "at": "2026-10-25T07:00:00"}
     assert alarms.dismiss("5 more minutes") == "Okay, 5 more minutes."
     assert "timer at" in alarms.list_alarms()
+
+
+@pytest.mark.parametrize("said, want", [
+    ("remind me to call mom at 5 pm", {"what": "call mom", "time": "5 pm"}),
+    ("remind me at 7:30 to take my medicine", {"what": "take my medicine", "time": "7:30"}),
+    ("remind me in 20 minutes to drink water", {"what": "drink water", "minutes": 20}),
+    ("remind me to stretch in an hour", {"what": "stretch", "minutes": 60}),
+    ("5 baje mom ko call karna yaad dila dena", {"what": "mom ko call karna", "time": "5 baje"}),
+])
+def test_reminder_phrases(said, want):
+    from assistant.llm import router
+    assert router.fast_route(said) == ("tools", [("set_reminder", want)])
+
+
+def test_a_reminder_is_said_once_not_rung_until_awake():
+    from datetime import datetime, timedelta
+    from assistant import alarms
+    assert "your medicine" in alarms.set_reminder("take my medicine", minutes=30)
+    row = next(r for r in alarms._load() if r["kind"] == "reminder")
+    assert datetime.fromisoformat(row["at"]) - datetime.now() > timedelta(minutes=29)
+    assert alarms.reminder_text(row) == "Reminder: take your medicine."
+    alarms.cancel("all")

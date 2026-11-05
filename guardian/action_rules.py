@@ -31,7 +31,7 @@ _SAFE = {
     "play_music", "music_control", "ask_about_song", "play_video_on_youtube", "play_latest_video_from_channel",
     "play_recommended", "youtube_control", "control_video_playback", "seek_video", "set_video_fullscreen",
     "set_video_volume", "switch_to_browser_tab", "switch_to_window", "restore_window", "minimize_window",
-    "set_alarm", "set_timer", "cancel_alarm", "stop_alarm", "set_voice", "remember_name", "move_status_orb",
+    "set_alarm", "set_timer", "set_reminder", "cancel_alarm", "stop_alarm", "set_voice", "remember_name", "move_status_orb",
     "review_logs", "set_daily_update_time", "app_controls", "app_read", "focus_input_field",
     # MCP servers' read-only tools (mcp_servers/servers.json)
     "sequentialthinking", "list_allowed_directories", "read_text_file", "read_media_file", "read_multiple_files",
