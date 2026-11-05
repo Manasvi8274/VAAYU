@@ -596,6 +596,10 @@ class Orchestrator:
             if not text:
                 return  # only his own "Yes?" came back
 
+        from assistant import learned
+        if learned.correction(text):  # "no, not that" right after a learned command: it's unlearned
+            interaction_log.log_event("unlearned", text=text)
+
         print(f"You said: {text}")
         interaction_log.log_event("heard", text=text, state=self.state.value, audio_seconds=audio_seconds,
                                   stt_ms=stt_time.ms, audio_file=_save_audio(audio) if audio is not None else None)
@@ -708,6 +712,8 @@ class Orchestrator:
         # from personal conversation - here, not in brain.respond, so only real
         # turns are remembered, never benchmark/test runs.
         memory.log_turn(text, reply)
+        if error is None and learned.from_turn(text, self.brain.trace):  # next time: instant (assistant/learned.py)
+            interaction_log.log_event("learned", text=text, trace=self.brain.trace)
         if error is None and any(step.get("path") == "chat" for step in self.brain.trace):
             memory.learn_async(self.brain.client, self.brain.model, text, reply)
         print(f"Assistant: {reply}")

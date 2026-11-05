@@ -216,6 +216,8 @@ def _no_real_claude_thinking():
         mp.setattr(agent, "LOG", agent.LOG.parent / "test_agent_jobs.jsonl")
         from assistant.tools import screen  # the screen: never grabbed, looked at, or clicked from a test
         mp.setattr(screen, "_grab_full", lambda: (_ for _ in ()).throw(RuntimeError("no screen in tests")))
+        from assistant import learned  # commands learned from the user: never from a test
+        mp.setattr(learned, "PATH", agent.LOG.parent / "test_learned_commands.json")
         from assistant import routines  # the user's own routines: never changed by a test
         mp.setattr(routines, "PATH", agent.LOG.parent / "test_routines.json")
         from assistant.tools import screen_memory

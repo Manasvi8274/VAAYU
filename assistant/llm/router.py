@@ -29,7 +29,7 @@ from assistant.tools.registry import ToolRegistry
 # "hold on" was only stripped when it came before the name).
 _LEAD = re.compile(
     r"^(?:(?:hey|ok|okay|so|and|um+|uh+|hmm+|hold on|let's|lets|vaa?yu|please|pls|can you|could you|would you|"
-    r"will you|zara|just)\s+)*", re.I)
+    r"will you|zara|just|yaar|bhai|arre|arey|acha|achha)\s+)*", re.I)  # "yaar chrome kholo" opened "yaar chrome"
 # Whisper adds a stray "You" before a command (real log: "You open youtube." -> 15 s LLM detour, failed), or
 # writes "Vaayu" as "why you" (real log: "Hey why you play the song bang bang" -> 28 s LLM, played nothing).
 _STRAY_YOU = re.compile(r"^(?:(?:why|wai|vai|whai) )?you\s+(?=(?:open|close|play|pause|resume|stop|mute|unmute|search|show|"
@@ -1091,7 +1091,8 @@ def fast_route(text: str, last_reply: str = ""):
     command, or None to fall back to the LLM. Deliberately conservative:
     a miss only costs LLM latency, a wrong hit does the wrong thing.
     last_reply: Vaayu's previous reply ("Music volume is now 70%." makes "reduce it to 20" the song's)."""
-    routed = _fast_route(to_roman(text), last_reply) or _route_screen(normalize(to_roman(text)))
+    routed = _fast_route(to_roman(text), last_reply) or _route_learned(to_roman(text)) \
+        or _route_screen(normalize(to_roman(text)))
     if routed and routed[0] == "tools" and any(n == "play_music" and _NO_NAME.search(a.get("query", ""))
                                                for n, a in routed[1]):
         return ("reply", "I didn't catch the song's name - say 'play' and the name.")
@@ -1112,6 +1113,13 @@ _CLICK_SCREEN = re.compile(r"^(?:click|tap)(?: on)? (?P<t>(?:the |that |this )?.
 
 _ON_A_PAGE = re.compile(r"\b(?:on|in) (?:youtube|the (?:web ?)?page|this page|the (?:web)?site|google|the browser|"
                         r"chrome|brave|edge|firefox)\b", re.I)
+
+
+def _route_learned(text: str):
+    """A sentence the brain worked out once before (assistant/learned.py)."""
+    from assistant import learned
+    calls = learned.match(text)
+    return ("tools", calls) if calls else None
 
 
 def _route_screen(t: str):
