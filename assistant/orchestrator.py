@@ -818,6 +818,8 @@ class Orchestrator:
         from assistant import agent, proactive
         agent.ANNOUNCE = self._speak
         proactive.start(self._speak, busy=lambda: self._busy)  # welcome backs, breaks, late nights - if turned on
+        from assistant.tools import web_answer  # the usual place's weather, fetched ahead of time
+        threading.Thread(target=web_answer.keep_weather_fresh, daemon=True, name="weather-fresh").start()
         from assistant import phone  # the phone (Telegram), if the user made a bot - data/telegram.json
         from assistant.tools import screen
         phone.TelegramBridge(self.handle_remote, stt=self.stt, screenshot=screen._grab_full).start()  # a background job's "Done with your task. ..."

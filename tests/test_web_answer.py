@@ -144,3 +144,22 @@ def test_no_city_means_the_last_city_asked(monkeypatch, tmp_path):
     web_answer.get_weather("Gurugram")
     web_answer.get_weather("")
     assert asked == ["Gurugram", "Gurugram"]
+
+
+def test_weather_is_fetched_once_then_reused(monkeypatch):
+    # Real log: weather took 2.3-6.5 s every time (two internet calls).
+    from assistant.tools import web_answer
+    calls = []
+
+    def fake(url, params):
+        calls.append(url)
+        if "geocoding" in url:
+            return {"results": [{"name": "Gurugram", "latitude": 28.4, "longitude": 77.0, "country_code": "IN"}]}
+        return {"daily": {"temperature_2m_max": [30, 31], "temperature_2m_min": [18, 19],
+                          "precipitation_probability_max": [0, 10], "weather_code": [0, 1]},
+                "current": {"temperature_2m": 25, "apparent_temperature": 26, "weather_code": 0}}
+    monkeypatch.setattr(web_answer, "_get_json", fake)
+    monkeypatch.setattr(web_answer, "PLACE_FILE", web_answer.PLACE_FILE.parent / "test_weather_place.txt")
+    first = web_answer.get_weather("gurgaon")
+    assert web_answer.get_weather("gurgaon") == first and len(calls) == 2  # second time: no internet at all
+    assert web_answer._OLD_NAMES["bombay"] == "mumbai"  # was hidden inside a comment

@@ -68,12 +68,59 @@ _REGION_WORDS = {"india", "bharat", "haryana", "punjab", "delhi ncr", "ncr", "up
 
 # Old names the geocoder puts elsewhere: "gurgaon" was a village in Maharashtra, "bangalore" a town in Pakistan.
 _OLD_NAMES = {"gurgaon": "gurugram", "gurgam": "gurugram", "gurgao": "gurugram", "gurgav": "gurugram",
-              "guru gao": "gurugram", "guru gaon": "gurugram", "gudgaon": "gurugram",  # how Whisper hears it "bangalore": "bengaluru", "bombay": "mumbai", "calcutta": "kolkata",
+              "guru gao": "gurugram", "guru gaon": "gurugram", "gudgaon": "gurugram",  # how Whisper hears it
+              "bangalore": "bengaluru", "bombay": "mumbai", "calcutta": "kolkata",  # (were inside the comment above)
               "madras": "chennai", "poona": "pune", "baroda": "vadodara", "mysore": "mysuru", "trivandrum":
               "thiruvananthapuram", "benares": "varanasi", "banaras": "varanasi"}
 
 
+# Speed (2026-11-05, real log: weather took 2.3-6.5 s every time - two internet calls): a place is looked up once
+# per run, a forecast is reused for FORECAST_TTL, and the usual place is kept fresh in the background
+# (keep_weather_fresh) - so "what's the weather" is answered at once.
+FORECAST_TTL = 600  # calibration knob (seconds)
+_places: dict[str, tuple[str, float, float]] = {}
+_forecasts: dict[tuple, tuple[float, dict]] = {}
+
+
 def _locate(place: str) -> tuple[str, float, float]:
+    key = place.strip().lower()
+    if key and key in _places:
+        return _places[key]
+    found = _locate_online(place)
+    if key:
+        _places[key] = found
+    return found
+
+
+def _forecast(lat: float, lon: float) -> dict:
+    import time
+    hit = _forecasts.get((lat, lon))
+    if hit and time.time() - hit[0] < FORECAST_TTL:
+        return hit[1]
+    data = _get_json("https://api.open-meteo.com/v1/forecast", {
+        "latitude": lat, "longitude": lon, "timezone": "auto", "forecast_days": 2,
+        "current": "temperature_2m,apparent_temperature,weather_code",
+        "daily": "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max",
+    })
+    _forecasts[(lat, lon)] = (time.time(), data)
+    return data
+
+
+def keep_weather_fresh(every: float = FORECAST_TTL - 60) -> None:
+    """Background: the usual place's forecast fetched ahead of time, so it's ready when asked."""
+    import time
+    while True:
+        try:
+            place = PLACE_FILE.read_text(encoding="utf-8").strip() if PLACE_FILE.exists() else ""
+            _, lat, lon = _locate(place)
+            _forecasts.pop((lat, lon), None)
+            _forecast(lat, lon)
+        except Exception:
+            pass  # offline for a while - asked later, it is fetched then
+        time.sleep(every)
+
+
+def _locate_online(place: str) -> tuple[str, float, float]:
     if not place.strip():  # no place said: wherever this laptop is, from its IP
         here = _get_json("http://ip-api.com/json/", {"fields": "status,city,lat,lon"})
         if here.get("status") != "success":
@@ -123,11 +170,7 @@ def get_weather(place: str = "", day: str = "today") -> str:
         except OSError:
             pass
     name, lat, lon = _locate(place)
-    data = _get_json("https://api.open-meteo.com/v1/forecast", {
-        "latitude": lat, "longitude": lon, "timezone": "auto", "forecast_days": 2,
-        "current": "temperature_2m,apparent_temperature,weather_code",
-        "daily": "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max",
-    })
+    data = _forecast(lat, lon)
     d = data["daily"]
     i = 1 if day == "tomorrow" else 0
     hi, lo = round(d["temperature_2m_max"][i]), round(d["temperature_2m_min"][i])

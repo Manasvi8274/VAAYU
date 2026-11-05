@@ -386,3 +386,12 @@ def _isolated_alarms(tmp_path_factory):
         mp.setattr(alarms, "_real_start_scheduler", alarms.start_scheduler, raising=False)
         mp.setattr(alarms, "start_scheduler", lambda speak, set_volume=None: None)
         yield
+
+
+@pytest.fixture(autouse=True)
+def _fresh_weather_cache():
+    # web_answer keeps places and forecasts for the run (speed) - each test starts without them.
+    from assistant.tools import web_answer
+    web_answer._places.clear()
+    web_answer._forecasts.clear()
+    yield
