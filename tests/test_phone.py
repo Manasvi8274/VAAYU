@@ -72,3 +72,16 @@ def test_an_outward_action_is_asked_in_the_chat(bridge, monkeypatch):
 
 def test_no_token_no_bridge(tmp_path):
     assert phone.TelegramBridge(lambda *a: "", config_path=tmp_path / "none.json").start() is None
+
+
+def test_a_line_typed_in_the_orb_panel_is_shown_done_and_spoken(monkeypatch):
+    import queue
+    from assistant import orchestrator
+    o = orchestrator.Orchestrator.__new__(orchestrator.Orchestrator)
+    o.gui_queue, said = queue.Queue(), []
+    o.handle_remote = lambda text, confirm, audio=None: f"Did: {text}"
+    o._speak = said.append
+    o._voice_confirm = lambda *a: False
+    o.handle_typed("open chrome")
+    shown = [m["who"] + ":" + m["text"] for m in iter(lambda: o.gui_queue.get() if not o.gui_queue.empty() else None, None)]
+    assert shown == ["you:open chrome", "vaayu:Did: open chrome"] and said == ["Did: open chrome"]

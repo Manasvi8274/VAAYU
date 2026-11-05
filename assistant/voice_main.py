@@ -30,7 +30,10 @@ def main() -> None:
     orchestrator_thread = threading.Thread(target=orchestrator.run_forever, daemon=True)
     orchestrator_thread.start()
 
-    StatusOrb(gui_queue).run()
+    orb = StatusOrb(gui_queue)
+    # typed in the orb's chat panel -> the orchestrator, off the GUI thread
+    orb.on_typed = lambda text: threading.Thread(target=orchestrator.handle_typed, args=(text,), daemon=True).start()
+    orb.run()
 
 
 if __name__ == "__main__":

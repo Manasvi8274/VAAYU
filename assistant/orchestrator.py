@@ -584,6 +584,18 @@ class Orchestrator:
         finally:
             self._busy = False
 
+    def _show(self, who: str, text: str) -> None:
+        """A line in the orb's chat panel (gui/status_orb.py)."""
+        if getattr(self, "gui_queue", None) is not None:
+            self.gui_queue.put({"kind": "said", "who": who, "text": text})
+
+    def handle_typed(self, text: str) -> None:
+        """A line typed into the orb's chat panel: shown, done, answered in the panel and aloud."""
+        self._show("you", text)
+        reply = self.handle_remote(text, confirm=self._voice_confirm)
+        self._show("vaayu", reply)
+        self._speak(reply)
+
     def handle_remote(self, text: str, confirm, audio=None) -> str:
         """A command typed or sent as a voice note on the phone (assistant/phone.py): the same brain and the same
         Guardian rules as a spoken one, answered in text - not said aloud at home."""
@@ -633,6 +645,7 @@ class Orchestrator:
             interaction_log.log_event("unlearned", text=text)
 
         print(f"You said: {text}")
+        self._show("you", text)
         interaction_log.log_event("heard", text=text, state=self.state.value, audio_seconds=audio_seconds,
                                   stt_ms=stt_time.ms, audio_file=_save_audio(audio) if audio is not None else None)
         from assistant import alarms
@@ -749,6 +762,7 @@ class Orchestrator:
         if error is None and any(step.get("path") == "chat" for step in self.brain.trace):
             memory.learn_async(self.brain.client, self.brain.model, text, reply)
         print(f"Assistant: {reply}")
+        self._show("vaayu", reply)
         with Timer() as speak_time:
             if getattr(self, "_pending_text", None):  # cut off during "One second." by a new command: that wins
                 interaction_log.log_event("reply_dropped", reply=reply, for_text=self._pending_text)

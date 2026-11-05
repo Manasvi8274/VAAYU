@@ -38,6 +38,7 @@ from assistant.gui.orb_position import parse_position
 _SIZE = 60
 _MARGIN = 24
 _POLL_MS = 30
+_CHAT_W, _CHAT_H, _CHAT_LINES = 380, 300, 60
 _ROTATION_DEGREES_PER_SEC = 45.0  # steady spin while awake
 _RING_COUNT = 9
 _STREAK_COUNT = 5
@@ -76,6 +77,13 @@ class StatusOrb:
 
         self.canvas.bind("<ButtonPress-1>", self._on_drag_start)
         self.canvas.bind("<B1-Motion>", self._on_drag_motion)
+        self.canvas.bind("<ButtonRelease-1>", self._on_release)
+
+        # The chat panel (#14): a click on the orb opens it - what he heard, what he said, and a box to type to him.
+        self.on_typed = None  # set by voice_main: a typed line goes to the orchestrator
+        self._lines: list[tuple[str, str]] = []
+        self._chat: "tk.Toplevel | None" = None
+        self._moved = False
 
         self._poll_queue()
         self._animate()
@@ -114,8 +122,59 @@ class StatusOrb:
         # Fixed glossy highlight (doesn't rotate) - gives the 3D-sphere illusion.
     def _on_drag_start(self, event: "tk.Event") -> None:
         self._drag_start = (event.x, event.y)
+        self._moved = False
+
+    def _on_release(self, _event: "tk.Event") -> None:
+        if not self._moved:  # a click, not a drag
+            self._toggle_chat()
+
+    def _toggle_chat(self) -> None:
+        if self._chat is not None:
+            self._chat.destroy()
+            self._chat = None
+            return
+        win = tk.Toplevel(self.root)
+        win.overrideredirect(True)
+        win.attributes("-topmost", True)
+        x = self.root.winfo_x() + _SIZE + 8
+        y = self.root.winfo_y()
+        if x + _CHAT_W > self.root.winfo_screenwidth():
+            x = self.root.winfo_x() - _CHAT_W - 8
+        win.geometry(f"{_CHAT_W}x{_CHAT_H}+{max(0, x)}+{y}")
+        win.configure(bg="#14161c")
+        text = tk.Text(win, bg="#14161c", fg="#e6e6e6", wrap="word", relief="flat", font=("Segoe UI", 10),
+                       padx=10, pady=8, state="disabled", highlightthickness=0)
+        text.tag_configure("you", foreground="#7fd1ff")
+        text.tag_configure("vaayu", foreground="#f2f2f2")
+        text.pack(fill="both", expand=True)
+        entry = tk.Entry(win, bg="#232733", fg="#ffffff", insertbackground="#ffffff", relief="flat",
+                         font=("Segoe UI", 11))
+        entry.pack(fill="x", padx=8, pady=8, ipady=6)
+        entry.bind("<Return>", lambda _e: self._send(entry))
+        entry.bind("<Escape>", lambda _e: self._toggle_chat())
+        entry.focus_force()
+        self._chat, self._chat_text = win, text
+        self._render()
+
+    def _send(self, entry: "tk.Entry") -> None:
+        said = entry.get().strip()
+        entry.delete(0, "end")
+        if said and self.on_typed is not None:
+            self.on_typed(said)
+
+    def _render(self) -> None:
+        if self._chat is None:
+            return
+        t = self._chat_text
+        t.configure(state="normal")
+        t.delete("1.0", "end")
+        for who, line in self._lines[-_CHAT_LINES:]:
+            t.insert("end", ("You: " if who == "you" else "Vaayu: ") + line + "\n", who)
+        t.configure(state="disabled")
+        t.see("end")
 
     def _on_drag_motion(self, event: "tk.Event") -> None:
+        self._moved = self._moved or abs(event.x - self._drag_start[0]) + abs(event.y - self._drag_start[1]) > 4
         x = self.root.winfo_x() + (event.x - self._drag_start[0])
         y = self.root.winfo_y() + (event.y - self._drag_start[1])
         self.root.geometry(f"+{x}+{y}")
@@ -143,6 +202,9 @@ class StatusOrb:
                     self._handle_move(msg.get("position", ""))
                 elif kind == "state":
                     self._awake = msg.get("value") == "awake"
+                elif kind == "said":
+                    self._lines = (self._lines + [(msg.get("who", "vaayu"), str(msg.get("text", "")))])[-200:]
+                    self._render()
                 elif kind == "shutdown":
                     self.root.destroy()
                     return
