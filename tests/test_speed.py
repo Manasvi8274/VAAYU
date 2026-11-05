@@ -79,3 +79,33 @@ def test_thinking_goes_to_claude_and_falls_back_to_the_local_model(monkeypatch):
     assert think.think_hard("car or bike") == "Buy the bike."  # markdown stripped for speaking
     monkeypatch.setattr(think.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a, 0, "You've hit your usage limit", ""))
     assert think.think_hard("car or bike") == "Local answer."  # limit reached: the local model thinks instead
+
+
+def test_a_brain_partly_on_the_cpu_is_reloaded_once_not_forever():
+    # Voice test 2026-11-05: 19% of the brain on the CPU made chat 5-7 s; a reload that can't fit must not repeat.
+    from unittest.mock import MagicMock, patch
+    from assistant.llm.ollama_client import OllamaBrain
+    with patch("assistant.llm.ollama_client.ollama.Client"):
+        brain = OllamaBrain(host="http://fake", model="vaayu-finetuned")
+    brain.client.ps.return_value = {"models": [{"model": "vaayu-finetuned:latest", "size": 100, "size_vram": 81}]}
+    brain.warm_up = MagicMock()
+    assert brain.ensure_on_gpu() is True and brain.client.generate.call_count == 1
+    assert brain.ensure_on_gpu() is False and brain.client.generate.call_count == 1  # came back no better: leave it
+    brain.client.ps.return_value = {"models": [{"model": "vaayu-finetuned:latest", "size": 100, "size_vram": 100}]}
+    assert brain.ensure_on_gpu() is False
+
+
+def test_the_chat_prompt_keeps_its_cached_start():
+    # What changes each turn (clock, facts, earlier talks) must not be in the system prompt: the cached start breaks.
+    from unittest.mock import patch
+    from assistant.llm.ollama_client import OllamaBrain
+    with patch("assistant.llm.ollama_client.ollama.Client"):
+        brain = OllamaBrain(host="http://fake", model="m")
+    brain.trace, brain._hindi_turn = [], False
+    brain.client.chat.return_value = {"message": {"content": "Bhai, take a break."}}
+    systems = []
+    for said in ("i am tired", "tell me a joke"):
+        brain._chat([{"role": "user", "content": said}], said)
+        msgs = brain.client.chat.call_args.kwargs["messages"]
+        systems.append([m["content"] for m in msgs if m["role"] == "system"])
+    assert systems[0] == systems[1] and len(systems[0]) == 1

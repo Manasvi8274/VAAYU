@@ -161,6 +161,8 @@ class VADListener:
         frame_count = 0
         energy_gate = self._noise_floor_rms * self.energy_threshold_multiplier
 
+        self.early_still_valid = False  # True when the early check's transcript covers all the speech returned
+        early_checked = False
         if self._carry and not self._interrupted:  # the start of a command said right after the name
             buffer, in_speech, self._carry = list(self._carry), True, []
         for frame in frames:
@@ -193,18 +195,21 @@ class VADListener:
                 frame_count += 1
                 if is_speech:
                     silence_run = 0
+                    early_checked = False  # they went on talking: the early transcript is out of date
                 else:
                     silence_run += 1
                     if silence_run >= self.silence_frames_threshold:
                         break
-                    if (silence_run == self.EARLY_SILENCE_MS // FRAME_MS and self.early_end is not None
-                            and self.early_end(np.concatenate(buffer).flatten().astype(np.float32) / 32768.0)):
-                        break
+                    if silence_run == self.EARLY_SILENCE_MS // FRAME_MS and self.early_end is not None:
+                        early_checked = True
+                        if self.early_end(np.concatenate(buffer).flatten().astype(np.float32) / 32768.0):
+                            break
                 if frame_count >= self.max_frames:
                     break
 
         if not buffer:
             return np.zeros(0, dtype=np.float32)
+        self.early_still_valid = early_checked  # only quiet came after the check: its transcript is the sentence
 
         audio_i16 = np.concatenate(buffer).flatten()
         return audio_i16.astype(np.float32) / 32768.0

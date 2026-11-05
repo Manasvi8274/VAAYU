@@ -9,7 +9,11 @@ from assistant.tts.kokoro_engine import KokoroEngine, _sentences
 
 
 def test_sentences_split_and_short_bits_ride_along():
-    assert _sentences("Okay. Opened Brave. It's 25 degrees and clear!") == ["Okay. Opened Brave.", "It's 25 degrees and clear!"]
+    # the very first bit is said at once (first sound sooner); later short bits ride along with the next
+    assert _sentences("Okay. Opened Brave. It's 25 degrees and clear!") == ["Okay.", "Opened Brave.", "It's 25 degrees and clear!"]
+    assert _sentences("It's 25 degrees. Okay. Opened Brave.") == ["It's 25 degrees.", "Okay. Opened Brave."]
+    # a long first sentence is split once at a natural point
+    assert _sentences("In Gurugram it's 29 degrees and clear, feels like 30.")[0] == "In Gurugram it's 29 degrees"
     assert _sentences("One long sentence without a stop") == ["One long sentence without a stop"]
 
 

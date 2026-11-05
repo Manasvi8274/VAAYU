@@ -84,6 +84,7 @@ _NUM_CTX = 8192
 # whose start was read last time is re-read in 0.1-0.2 s instead of 15 s (2,730 tokens at 185 tok/s on the
 # GTX 1650) - so the phrasing call starts with the tool prompt, and Ollama keeps two cache slots (tools, chat).
 BRAIN_CTX = _NUM_CTX
+GPU_SHARE_OK = 0.97  # calibration knob: less of the brain than this in GPU memory = reload it
 
 # Qwen3.5 reasons in a <think> block before every reply by default - several
 # seconds of dead air per step in a voice assistant. Qwen3.5 dropped Qwen3's
@@ -357,25 +358,33 @@ class OllamaBrain:
             removed = memory.forget(m.group("a") or m.group("a2"))
             reply = "Done, I've forgotten that." if removed else "I didn't have anything saved about that."
             return reply, messages + [{"role": "assistant", "content": reply}]
-        system = BROTHER_PROMPT + _now_line()
+        # The prompt cache (voice test 2026-11-05): what changes every turn - the clock, the facts and earlier talks
+        # that match this sentence - goes LAST, in a note just before the user's words. When it sat in the system
+        # prompt, everything after it (the examples, the history) was re-read every turn: ~1,200 tokens, 5-6 s of
+        # a 6.8 s chat reply. Now the fixed part (persona, examples, the conversation so far) stays cached.
+        system = BROTHER_PROMPT
+        context = _now_line().strip()
         if known := memory.facts_for(user_text, k=_CHAT_FACTS):  # the relevant ones + the newest few
-            system += "\nWhat you remember about them:\n" + "\n".join(f"- {f}" for f in known)
+            context += "\nWhat you remember about them:\n" + "\n".join(f"- {f}" for f in known)
         if earlier := memory.past_talk(user_text):  # "what did I tell you about my exam?" - or a worry from last week
-            system += ("\nEarlier conversations about this (bring them up naturally if they help - ask how it went):\n"
-                       + "\n".join(f"- {e}" for e in earlier))
+            context += ("\nEarlier conversations about this (bring them up naturally if they help - ask how it went):\n"
+                        + "\n".join(f"- {e}" for e in earlier))
         try:
             saved = [n["text"] for n in notes.list_notes(5)]
         except Exception:  # notes DB unreadable - chat still works
             saved = []
         if saved:
-            system += "\nTheir recent notes:\n" + "\n".join(f"- {n}" for n in saved)
+            context += "\nTheir recent notes:\n" + "\n".join(f"- {n}" for n in saved)
         history = []
         for turn in ([] if self._hindi_turn else memory.recent_turns(_CHAT_TURNS)):  # Hindi: no history - live,
             # the user's earlier Roman-Hindi lines pulled the English brain into broken Hinglish
             if _DEVANAGARI.search(turn["reply"]):  # a Hindi exchange: shown to the English brain it answered in
                 continue                            # broken Hinglish (live, 2026-11-05) - Hindi is translated after
             history += [{"role": "user", "content": turn["user"]}, {"role": "assistant", "content": turn["reply"]}]
-        convo = [{"role": "system", "content": system}, *_CHAT_EXAMPLES, *history, {"role": "user", "content": user_text}]
+        # (in the user's turn, not a second system message: Ollama's template merges every system message into the
+        # first one, which changed the cached start again - measured 0.65 s vs 0.05 s to read)
+        convo = [{"role": "system", "content": system}, *_CHAT_EXAMPLES, *history,
+                 {"role": "user", "content": f"(Background for you - don't read it out:\n{context})\n\n{user_text}"}]
         for attempt in range(2):
             response = self.client.chat(
                 model=self.model,
@@ -404,14 +413,39 @@ class OllamaBrain:
         """Read the tool prompt and the chat prompt once, so the first real question isn't 15-25 s (measured: a cold
         tool call 26.8 s, a warm one 3.4 s, a warm chat 1.0 s)."""
         from assistant.llm.prompts import SYSTEM_PROMPT
-        for system in (SYSTEM_PROMPT + _now_line(), BROTHER_PROMPT + _now_line()):
+        for start in ([{"role": "system", "content": SYSTEM_PROMPT + _now_line()}],
+                      [{"role": "system", "content": BROTHER_PROMPT}, *_CHAT_EXAMPLES]):  # as _chat starts
             try:
-                self.client.chat(model=self.model, messages=[{"role": "system", "content": system},
-                                                             {"role": "user", "content": "hi"}],
+                self.client.chat(model=self.model, messages=start + [{"role": "user", "content": "hi"}],
                                  keep_alive=_KEEP_ALIVE, think=_THINK,
                                  options={"num_ctx": BRAIN_CTX, "num_predict": 1, "temperature": 0})
             except Exception:
                 return  # Ollama not up yet - the first question just reads them itself
+
+    def on_gpu_share(self) -> float | None:
+        """How much of the brain is in GPU memory (1.0 = all), from Ollama's /api/ps; None if not loaded/unknown."""
+        try:
+            for m in self.client.ps().get("models", []):
+                if m.get("model", "").split(":")[0] == self.model.split(":")[0] and m.get("size"):
+                    return float(m.get("size_vram", 0)) / float(m["size"])
+        except Exception:
+            return None
+        return None
+
+    def ensure_on_gpu(self) -> bool:
+        """Voice test 2026-11-05: chat replies took 5-7 s instead of ~1 s - the brain had been loaded while another
+        model held GPU memory (the vision model), so Ollama put 19% of it on the CPU, and it stays loaded forever.
+        If part of it is on the CPU, unload it and load it again (now that the GPU has room). True if reloaded."""
+        share = self.on_gpu_share()
+        if share is None or share >= GPU_SHARE_OK or share <= getattr(self, "_share_after_reload", -1) + 0.02:
+            return False  # all there - or a reload already came back no better (it doesn't fit; ~27 s lost each try)
+        try:
+            self.client.generate(model=self.model, prompt="", keep_alive=0)  # unload
+        except Exception:
+            return False
+        self.warm_up()  # load again, whole on the GPU if it fits, and re-read the prompts
+        self._share_after_reload = self.on_gpu_share() or 0.0
+        return True
 
     def respond(
         self,

@@ -191,6 +191,9 @@ def _media_playing() -> bool:
 # (a web lookup, a multi-step job, a long answer) - so if nothing has been said ACK_AFTER seconds into a turn,
 # Vaayu says what he's doing, and the result follows.
 ACK_AFTER = 1.5  # calibration knob (seconds)
+# Known-slow work is acknowledged almost at once - but not at once: the weather is often ready already (cached), and
+# "Okay, checking the weather." first made the answer itself 2 s later (voice test 2026-11-05: 6.1 s for a 4 ms answer)
+SLOW_ACK_AFTER = 0.4  # calibration knob (seconds)
 _ACKS = ["On it.", "One second.", "Ek second, bhai.", "Checking."]
 _STEP_WORDS = {"open_app": "opening {app_name}", "close_app": "closing {app_name}", "play_music": "playing {query}",
                "type_text": "typing it", "get_weather": "checking the weather", "get_system_status": "checking the laptop",
@@ -256,6 +259,7 @@ def ack_now(text: str) -> bool:
 
 
 _TURN_LOCK = threading.Lock()
+_GPU_CHECK_SECONDS = 300  # calibration knob
 
 # Everyday Hindi requests, in English - Whisper's own translation of short Hindi is unreliable (voice test 2026-11-05:
 # "ek chutkula sunao" -> "Why don't you just listen to me?", and Vaayu answered that).
@@ -415,6 +419,21 @@ class Orchestrator:
         self.activator.wait_for_trigger()
         return record(self.config.activation.record_seconds)
 
+    def _keep_brain_on_gpu(self) -> None:
+        """Warm the brain now, then every few minutes while idle check it is whole in GPU memory (ensure_on_gpu)."""
+        self.brain.warm_up()
+        if not hasattr(self.brain, "ensure_on_gpu"):
+            return
+        from assistant.tools import screen
+        screen.AFTER_LOCAL_LOOK = lambda: threading.Thread(target=self.brain.ensure_on_gpu, daemon=True).start()
+        while True:
+            try:
+                if not getattr(self, "_busy", False) and self.brain.ensure_on_gpu():
+                    interaction_log.log_event("brain_reloaded", reason="part of it was on the CPU")
+            except Exception:
+                pass
+            time.sleep(_GPU_CHECK_SECONDS)
+
     def _complete_command(self, audio) -> bool:
         """Smart end of speech (audio/vad_listener.py): the sentence so far, transcribed once - is it already a whole
         command Vaayu knows? Then he acts now instead of waiting out the silence. The transcript is kept: if the
@@ -433,7 +452,7 @@ class Orchestrator:
             routed = router.fast_route(text_after_name(text) or text)
         except Exception:
             return False
-        return bool(routed) and routed[0] == "tools"
+        return bool(routed)
 
     def _set_state(self, new_state: "State") -> None:
         self.state = new_state
@@ -625,11 +644,16 @@ class Orchestrator:
         from assistant.tools import music
         music.user_is_speaking()  # the conversation goes on: a held song stays paused
         self._busy = True
+        tts = getattr(self, "tts", None)
+        if hasattr(tts, "prewarm"):
+            tts.busy = True  # the reply's voice goes before the background pre-recording (kokoro_engine)
         try:
             with _TURN_LOCK:  # one turn at a time - a phone command may be running (assistant/phone.py)
                 self._handle_utterance(audio)
         finally:
             self._busy = False
+            if hasattr(tts, "prewarm"):
+                tts.busy = False
 
     def _show(self, who: str, text: str) -> None:
         """A line in the orb's chat panel (gui/status_orb.py)."""
@@ -677,8 +701,9 @@ class Orchestrator:
         with Timer() as stt_time:
             if heard is not None:
                 text = heard
-            elif early and audio is not None and early[0] == len(audio):
-                text = early[1]  # transcribed at the early check, and nothing was said after it
+            elif early and audio is not None and (early[0] == len(audio)
+                                                  or getattr(getattr(self, "listener", None), "early_still_valid", False)):
+                text = early[1]  # transcribed at the early check, and only quiet came after it - not transcribed again
             else:
                 text = self.stt.transcribe(audio)
         audio_seconds = round(len(audio) / _SAMPLE_RATE, 1) if audio is not None else 0.0
@@ -787,7 +812,7 @@ class Orchestrator:
         error = None
         started, self._turn_done = time.time(), False
         ack_text = said_hindi or text
-        ack = threading.Timer(0.0 if ack_now(text) else ACK_AFTER, self._ack_if_slow, args=(ack_text, started))
+        ack = threading.Timer(SLOW_ACK_AFTER if ack_now(text) else ACK_AFTER, self._ack_if_slow, args=(ack_text, started))
         ack.daemon = True
         ack.start()
         with Timer() as brain_time:
@@ -864,7 +889,7 @@ class Orchestrator:
         from assistant.llm import translate  # Hindi replies: the translator loaded now, not on the first one
         threading.Thread(target=translate.warm_up, daemon=True, name="translator-load").start()
         if hasattr(self.brain, "warm_up"):
-            threading.Thread(target=self.brain.warm_up, daemon=True, name="brain-warm-up").start()
+            threading.Thread(target=self._keep_brain_on_gpu, daemon=True, name="brain-warm-up").start()
         if self.continuous:
             self.listener.start()
             print(

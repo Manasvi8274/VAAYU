@@ -45,11 +45,34 @@ def _sentences(text: str) -> list[str]:
         parts += [c.strip() for c in _CLAUSE.split(sentence) if c.strip()] if len(sentence) > 50 else [sentence]
     out: list[str] = []
     for p in parts:  # very short bits ("Okay.") ride along with the next sentence - fewer gaps
-        if out and len(out[-1]) < 12:
+        if out and len(out[-1]) < 12 and len(out) > 1:  # (not the very first: "Sure!" alone is said at once)
             out[-1] = f"{out[-1]} {p}"
         else:
             out.append(p)
-    return out
+    return _first_bit_first(out)
+
+
+# The first sound sooner (voice test 2026-11-05): Kokoro makes ~0.47 s per second of speech on this CPU, and nothing
+# plays until the first piece is made - "In Gurugram it's 29 degrees and clear" took 1.9 s, "In Gurugram" 0.5 s. So
+# the first sentence is split once, at a natural point (a comma, or before "and"/"because"/"at"/"in"...), between
+# 25% and 60% of its words - long enough that the rest is made while it plays (no gap), short enough to start soon.
+_BREAK_BEFORE = {"and", "but", "because", "so", "at", "in", "on", "for", "with", "to", "is", "are", "was", "which",
+                 "that", "if", "when", "or", "from", "of"}
+
+
+def _first_bit_first(parts: list[str]) -> list[str]:
+    if not parts or _DEVANAGARI.search(parts[0]):
+        return parts
+    words = parts[0].split()
+    n = len(words)
+    if n < 6:
+        return parts
+    lo, hi = max(2, round(n * 0.25)), round(n * 0.7)
+    cut = next((i + 1 for i in range(lo - 1, hi) if words[i].endswith(",")), None)
+    cut = cut or next((i for i in range(lo, hi + 1) if words[i].lower().strip(",.") in _BREAK_BEFORE), None)
+    if not cut:
+        return parts
+    return [" ".join(words[:cut]), " ".join(words[cut:])] + parts[1:]
 
 
 # The voices worth offering, lightest/closest to the old Windows voice (Microsoft David) first -
@@ -172,10 +195,13 @@ class KokoroEngine(TTSEngine):
         def run():
             for text in replies:
                 for part in _sentences(text):
+                    while getattr(self, "busy", False):  # a live reply is being made or said: it goes first
+                        time.sleep(0.2)
                     try:
                         self._synth(part)
                     except Exception:
                         return
+                    time.sleep(0.05)
         threading.Thread(target=run, daemon=True, name="kokoro-prewarm").start()
 
     def speak(self, text: str, stop_event=None, pause_event=None) -> None:
@@ -194,6 +220,7 @@ class KokoroEngine(TTSEngine):
         self.first_sound_at = 0.0
         if not text or not text.strip():
             return
+        self.busy = True  # the background pre-recording waits (prewarm)
         # Unbounded: a bounded queue left the producer blocked forever after a "stop" (replies are short).
         ready: "queue.Queue[tuple[np.ndarray, int] | None]" = queue.Queue()
 
@@ -235,6 +262,7 @@ class KokoroEngine(TTSEngine):
                     time.sleep(chunk_seconds)
                 sd.wait()
         finally:
+            self.busy = False
             echo_cancel.stopped()
             if on_amplitude is not None:
                 on_amplitude(0.0)

@@ -27,6 +27,7 @@ from assistant.tools.registry import registry
 
 LOCAL_ONLY = False      # calibration knob: True = the screen never leaves the laptop (slower)
 LOCAL_MODEL = "qwen2.5vl:3b"
+AFTER_LOCAL_LOOK = None  # set by the orchestrator: re-check that the brain is whole on the GPU
 _VISION_CTX = 4096
 WIDTH = 1280
 _DIR = Path(tempfile.gettempdir()) / "vaayu-screen"  # only the screenshot is in here, deleted after each look
@@ -84,6 +85,9 @@ def _ask_local(img, prompt: str) -> str:
             return (json.load(r)["message"].get("content") or "").strip()
     except OSError as exc:
         raise RuntimeError("I couldn't look at the screen just now - my vision model isn't answering.") from exc
+    finally:
+        if AFTER_LOCAL_LOOK:
+            AFTER_LOCAL_LOOK()  # the vision model pushed part of the brain to the CPU - put it back (orchestrator)
 
 
 def look(prompt: str, img=None) -> str:

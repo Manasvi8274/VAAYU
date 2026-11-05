@@ -108,10 +108,11 @@ def test_chat_uses_persona_memory_and_no_tools(brain, registry):
     kwargs = brain.client.chat.call_args.kwargs
     assert "tools" not in kwargs and kwargs["options"]["num_predict"] == 200
     system = kwargs["messages"][0]["content"]
-    assert "elder brother" in system and "Has an exam on Monday." in system
-    assert kwargs["messages"][1 + len(ollama_client._CHAT_EXAMPLES):] == [{"role": "user", "content": "I'm nervous"},
-                                      {"role": "assistant", "content": "That's normal."},
-                                      {"role": "user", "content": "I feel stuck in my job, what should I do?"}]
+    assert "elder brother" in system  # the fixed, cached start - what's remembered comes with the user's words
+    rest = kwargs["messages"][1 + len(ollama_client._CHAT_EXAMPLES):]
+    assert rest[:2] == [{"role": "user", "content": "I'm nervous"}, {"role": "assistant", "content": "That's normal."}]
+    assert rest[2]["role"] == "user" and "Has an exam on Monday." in rest[2]["content"]
+    assert rest[2]["content"].endswith("I feel stuck in my job, what should I do?")
     assert brain.trace == [{"path": "chat"}]
 
 

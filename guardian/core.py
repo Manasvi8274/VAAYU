@@ -371,9 +371,11 @@ def _ensure_ollama() -> None:
     if not exe.exists():
         log.warning("Ollama isn't running and %s isn't there - Vaayu will have no brain", exe)
         return
-    # two cache slots: the tool prompt and the chat prompt each stay read (assistant/llm/ollama_client.py BRAIN_CTX)
+    # two cache slots: the tool prompt and the chat prompt each stay read (assistant/llm/ollama_client.py BRAIN_CTX);
+    # the cache in 8 bits so both fit next to the speech model on the 4 GB GPU (2026-11-05: in 16 bits 19% of the
+    # brain went to the CPU and reading a prompt dropped to ~180 tokens/s - chat replies took 5-7 s)
     subprocess.Popen([str(exe), "serve"], env=dict(os.environ, OLLAMA_MODELS=str(REPO / "models" / "ollama"),
-                                                   OLLAMA_NUM_PARALLEL="2"),
+                                                   OLLAMA_NUM_PARALLEL="2", OLLAMA_KV_CACHE_TYPE="q8_0"),
                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                      creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     log.info("started Ollama's server (models in %s)", REPO / "models" / "ollama")
