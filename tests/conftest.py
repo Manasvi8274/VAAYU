@@ -211,6 +211,9 @@ def _no_real_claude_thinking():
         mp.setattr(think, "_real_run", think.subprocess.run, raising=False)
         mp.setattr(think.shutil, "which", lambda name: None)
         mp.setattr(think, "_local", lambda question: "Local answer.")
+        from assistant import agent  # a background job's planner: Claude, else the local 4B - neither in tests
+        mp.setattr(agent, "_local_plan", lambda prompt: '{"done": "Local plan."}')
+        mp.setattr(agent, "LOG", agent.LOG.parent / "test_agent_jobs.jsonl")
         yield
 
 

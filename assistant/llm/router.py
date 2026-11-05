@@ -695,6 +695,17 @@ _THINK = re.compile(r"^(?:please )?think (?:deeply |hard |carefully |properly )?
                     r"^(?P<q5>.+?) (?:soch ke|sochkar|soch kar) (?:batao|bata|bolo)$", re.I)
 
 
+_AGENT = [re.compile(p, re.I) for p in [
+    r"^(?:please )?(?:start|do|run) (?:a |this |the |one )?(?:task|job)(?: for me)?(?: to)?[:,]? (?P<task>.{6,})$",
+    r"^(?:can you |could you |please |go and )?(?P<task>(?:research|look into|compare|find|search for|gather|collect|"
+    r"make a list of|list|look up) .+? (?:and|then) (?:put|save|write|make|create|summari[sz]e|note|add|keep) .+)$",
+    r"^(?:can you |could you |please )?(?P<task>(?:research|look into|compare) .{6,})$",
+]]
+_AGENT_STATUS = re.compile(r"^(?:how'?s|how is|what'?s the status of|status of|is) (?:my|the) (?:task|job)"
+                           r"(?: going| done| finished)?$|^(?:are you )?(?:done|finished) with (?:my|the) (?:task|job)$",
+                           re.I)
+
+
 def _route_making(t: str):
     from assistant.tools.registry import registry
     routed = None
@@ -712,6 +723,10 @@ def _route_making(t: str):
         routed = ("list_tasks", {"when": (m.group("when") or "").strip()})
     elif m := _DONE_TASK.match(t):
         routed = ("complete_task", {"task": (m.group("task") or m.group("t2")).strip()})
+    elif m := _AGENT_STATUS.match(t):
+        routed = ("task_status", {})
+    elif m := next((m for p in _AGENT if (m := p.match(t))), None):
+        routed = ("do_task", {"task": m.group("task").strip(" .")})  # a job of several steps (assistant/agent.py)
     elif m := _THINK.match(t):
         q = next(g for g in m.groups() if g).strip(" .?")
         routed = ("think_hard", {"question": q})  # Claude through the Pro login (tools/think.py) - real reasoning
@@ -1293,6 +1308,7 @@ DIRECT_REPLY_TOOLS = {
     "app_click", "app_menu", "app_type", "app_keys",  # mcp_servers/windows_apps.py: "Clicked Save in Untitled - Notepad."
     "get_new_ability", "daily_briefing", "set_reminder", "design_image", "design_logo", "design_poster", "design_diagram", "design_presentation",
     "design_document", "add_task", "complete_task", "make_plan", "plan_my_day", "think_deeply", "think_hard", "list_tasks",
+    "do_task", "task_status",
 }
 
 

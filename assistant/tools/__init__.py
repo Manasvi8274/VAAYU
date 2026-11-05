@@ -1,6 +1,7 @@
 """Importing this package registers every tool with the shared registry."""
 
 from assistant.tools import (  # noqa: F401
+    agent_tools,
     alarm_tools,
     apps,
     audio_status,

@@ -35,6 +35,24 @@ def _local(question: str) -> str:
     return ask_thinking(question)
 
 
+def ask_claude(prompt: str) -> str | None:
+    """Claude's answer through the Pro login (text only - no tools of its own), or None if it isn't there."""
+    claude = shutil.which("claude")
+    if not claude:
+        return None
+    try:
+        # the prompt on stdin: `claude` is a .cmd on Windows, and a line break in an argument cut it off there
+        # (live: Claude answered "I didn't catch your question")
+        run = subprocess.run([claude, "-p", "--model", MODEL, "--output-format", "text"], input=prompt,
+                             capture_output=True, text=True, encoding="utf-8", errors="replace",
+                             timeout=TIMEOUT, cwd=tempfile.gettempdir(),
+                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0), env=dict(os.environ))
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    answer = (run.stdout or "").strip()
+    return answer if run.returncode == 0 and answer and not _LIMIT.search(answer) else None
+
+
 @registry.register(
     name="think_hard",
     description="Think a hard question, decision or problem through properly before answering (about 10 s) - only "
@@ -42,20 +60,8 @@ def _local(question: str) -> str:
     parameters={"type": "object", "properties": {"question": {"type": "string"}}, "required": ["question"]},
 )
 def think_hard(question: str) -> str:
-    claude = shutil.which("claude")
-    if claude:
-        try:
-            # the prompt on stdin: `claude` is a .cmd on Windows, and a line break in an argument cut it off there
-            # (live: Claude answered "I didn't catch your question")
-            run = subprocess.run([claude, "-p", "--model", MODEL, "--output-format", "text"], input=_prompt(question),
-                                 capture_output=True, text=True, encoding="utf-8", errors="replace",
-                                 timeout=TIMEOUT, cwd=tempfile.gettempdir(),
-                                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0), env=dict(os.environ))
-            answer = (run.stdout or "").strip()
-            if run.returncode == 0 and answer and not _LIMIT.search(answer):
-                return re.sub(r"[*#`]+", "", answer)
-        except (OSError, subprocess.TimeoutExpired):
-            pass
+    if answer := ask_claude(_prompt(question)):
+        return re.sub(r"[*#`]+", "", answer)
     answer = _local(question)  # minutes on this GPU, but an answer
     if not answer:
         raise RuntimeError("I thought about it but couldn't reach an answer.")
