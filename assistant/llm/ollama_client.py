@@ -360,6 +360,9 @@ class OllamaBrain:
         system = BROTHER_PROMPT + _now_line()
         if known := memory.facts_for(user_text, k=_CHAT_FACTS):  # the relevant ones + the newest few
             system += "\nWhat you remember about them:\n" + "\n".join(f"- {f}" for f in known)
+        if earlier := memory.past_talk(user_text):  # "what did I tell you about my exam?" - or a worry from last week
+            system += ("\nEarlier conversations about this (bring them up naturally if they help - ask how it went):\n"
+                       + "\n".join(f"- {e}" for e in earlier))
         try:
             saved = [n["text"] for n in notes.list_notes(5)]
         except Exception:  # notes DB unreadable - chat still works

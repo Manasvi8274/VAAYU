@@ -195,3 +195,21 @@ def test_hindi_said_gets_the_fast_english_answer_translated(monkeypatch):
     assert reply == "चिंता मत कर भाई।"
     assert all(c.kwargs["model"] == "m" for c in brain.client.chat.call_args_list)  # only the fast brain
     tools.dispatch.assert_not_called()  # a translated sentence never acts (a mistranslation set a wrong alarm)
+
+
+def test_past_conversations_come_back_when_relevant(monkeypatch):
+    # User (2026-11-05): better memory - "what did I tell you about my exam?"
+    import json
+    from datetime import datetime, timedelta
+    from assistant import knowledge, memory
+    old = (datetime.now() - timedelta(days=3)).isoformat(timespec="seconds")
+    memory._index_turn({"ts": old, "user": "my maths exam is on friday and i am scared",
+                        "reply": "Bhai, you'll do great - revise a little every day."})
+    memory._index_turn({"ts": old, "user": "open chrome", "reply": "Opened Chrome."})  # a command: not kept
+    now = datetime.now().isoformat(timespec="seconds")
+    memory._index_turn({"ts": now, "user": "my maths exam result came today", "reply": "How did it go?"})
+    monkeypatch.setattr(memory, "_TALK_RELEVANT", 0.0)
+    found = memory.past_talk("what did i tell you about my maths exam")
+    assert len(found) == 1 and "scared" in found[0] and "you replied" in found[0]  # today's is in the history already
+    assert all(r["text"] != "open chrome" for r in knowledge.all("talk"))
+    assert json.dumps(found)  # plain strings for the prompt

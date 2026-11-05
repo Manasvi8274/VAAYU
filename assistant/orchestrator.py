@@ -736,6 +736,7 @@ class Orchestrator:
         threading.Thread(target=mcp_tools.keep_loading, daemon=True, name="mcp-load").start()
         mcp_builder.ANNOUNCE = self._speak  # "a tool to X is ready - waiting for your yes"
         mcp_tools.ANNOUNCE = self._speak  # "On it - give me a minute" before a design or a deep think
+        threading.Thread(target=memory.index_past_talk, daemon=True, name="memory-backfill").start()
         from assistant import agent
         agent.ANNOUNCE = self._speak  # a background job's "Done with your task. ..."
         from assistant import research

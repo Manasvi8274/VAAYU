@@ -5,6 +5,9 @@ What Vaayu remembers about the user, kept only on this laptop:
   data/knowledge/facts.*    lasting facts pulled out of personal talk (name,
                             people in their life, goals, worries, dates...),
                             searchable by meaning (knowledge.py)
+  data/knowledge/talk.*     every past conversation, searchable by meaning - "what did I
+                            tell you about my exam?" / a worry from last week comes back
+                            when it's relevant (user, 2026-11-05: better memory)
 
 Mem0-style: after each chat turn one small, tool-free LLM call in a
 background thread sees what the user said plus the 3 most similar facts
@@ -54,8 +57,83 @@ def log_turn(user: str, reply: str) -> None:
         record = {"ts": datetime.now().isoformat(timespec="seconds"), "user": user, "reply": reply}
         with open(CONVERSATIONS_PATH, "a", encoding="utf-8") as f:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
+        threading.Thread(target=_index_turn, args=(record,), daemon=True, name="memory-index").start()
     except Exception as exc:
         interaction_log.log_error("memory.log_turn", exc)
+
+
+_TALK = "talk"
+_TALK_MIN_WORDS = 4      # "open chrome", "pause" - commands, not conversation
+_TALK_RELEVANT = 0.6     # calibration knob (bge-small), with a shared word (past_talk)
+
+
+def _index_turn(record: dict) -> None:
+    """One exchange into the searchable talk memory (the user's words carry it; the reply rides along)."""
+    try:
+        if len(record["user"].split()) >= _TALK_MIN_WORDS:
+            knowledge.add(_TALK, record["user"], meta={"when": record["ts"], "reply": record["reply"][:300]},
+                          dedupe=1.01)
+    except Exception as exc:
+        interaction_log.log_error("memory.index", exc)
+
+
+def index_past_talk() -> int:
+    """Once: every conversation already logged goes into the talk memory. How many were added."""
+    try:
+        if knowledge.all(_TALK) or not CONVERSATIONS_PATH.exists():
+            return 0
+        n = 0
+        for line in CONVERSATIONS_PATH.read_text(encoding="utf-8").splitlines():
+            try:
+                record = json.loads(line)
+            except ValueError:
+                continue
+            if len(record.get("user", "").split()) >= _TALK_MIN_WORDS:
+                _index_turn(record)
+                n += 1
+        return n
+    except Exception as exc:
+        interaction_log.log_error("memory.index_past_talk", exc)
+        return 0
+
+
+_RECALL_FRAME = re.compile(r"^(?:do you |you )?(?:remember|recall)(?: what| when| that| how)?(?: i (?:told|said to) you)?"
+                           r"(?: about)?\s*|^what (?:did|have) i (?:tell|told|say|said)(?: to)? you(?: about)?\s*|"
+                           r"^(?:what do you know|what you know) about\s*", re.I)
+_PLAIN = {"what", "when", "where", "how", "why", "who", "did", "do", "does", "you", "your", "i", "my", "me", "is", "am",
+          "are", "was", "the", "a", "an", "to", "of", "and", "about", "tell", "told", "said", "say", "remember", "it",
+          "that", "this", "lately", "today", "some", "can", "please", "now", "bhai", "in", "on", "for", "with", "be",
+          "have", "has", "had", "will", "would", "could", "should", "just", "really", "very", "there", "here", "they",
+          "them", "checked", "check", "know", "think", "want", "going", "got", "get"}
+
+
+def _content_words(text: str) -> set[str]:
+    return {w[:5] for w in re.findall(r"[a-z]+", text.lower()) if w not in _PLAIN and len(w) > 2}  # crude stem
+
+
+def past_talk(query: str, k: int = 3) -> list[str]:
+    """Earlier exchanges about what's being said now (not the current conversation - that's in the history).
+    Measured on the real log with bge-small: meaning alone ranked "Explain the next one." (0.68) above "my maths exam
+    is on friday" (0.66) for "what did I tell you about my exam" - so the recall framing is taken off, and a past
+    exchange must also share a real word with what's said."""
+    topic = _RECALL_FRAME.sub("", query.strip()) or query
+    words = _content_words(topic)
+    if not words:
+        return []
+    try:
+        since = (datetime.now() - timedelta(minutes=_RECENT_MINUTES)).isoformat(timespec="seconds")
+        found = knowledge.search(_TALK, topic, k=k + 10, min_score=_TALK_RELEVANT)
+    except Exception as exc:
+        interaction_log.log_error("memory.past_talk", exc)
+        return []
+    out = []
+    for _score, row in found:
+        when = row.get("meta", {}).get("when", "")
+        if when >= since or not words & _content_words(row["text"]):
+            continue
+        day = datetime.fromisoformat(when).strftime("%d %b") if when else "earlier"
+        out.append(f"{day} - they said: \"{row['text']}\" - you replied: \"{row.get('meta', {}).get('reply', '')}\"")
+    return out[:k]
 
 
 def recent_turns(n: int = 6) -> list[dict]:
