@@ -1123,8 +1123,33 @@ def _route_screen(t: str):
     return None
 
 
+_MAKE_ROUTINE = re.compile(r"^(?:when(?:ever)? i say|if i say) (?P<rest>.+)$|"
+                           r"^(?:create|make|add|set up|save) (?:a |one )?(?:new )?routine (?:called|named|for) (?P<rest2>.+)$",
+                           re.I)
+_LIST_ROUTINES = re.compile(r"^(?:what are|list|show|tell me) (?:all )?(?:my |the )?routines$", re.I)
+_DELETE_ROUTINE = re.compile(r"^(?:delete|remove|forget|cancel) (?:the |my )?(?:routine (?:called |named )?(?P<a>.+)|"
+                             r"(?P<b>.+?) routine)$", re.I)
+
+
+def _route_routines(t: str, with_commas: str = ""):
+    from assistant import routines
+    if calls := routines.match(t):
+        return ("tools", calls)
+    if m := _MAKE_ROUTINE.match(with_commas or t):
+        return ("reply", routines.create((m.group("rest") or m.group("rest2")).strip())
+                or "I couldn't follow the steps - say it like: when I say I'm leaving, pause the music and lock the laptop.")
+    if _LIST_ROUTINES.match(t):
+        return ("reply", routines.describe())
+    if m := _DELETE_ROUTINE.match(t):
+        name = (m.group("a") or m.group("b")).strip()
+        return ("reply", f"Deleted the '{name}' routine." if routines.delete(name) else f"I don't have a '{name}' routine.")
+    return None
+
+
 def _fast_route(text: str, last_reply: str):
     t = normalize(text)
+    if routine := _route_routines(t, normalize(text, keep_commas=True)):  # the user's own phrases first (routines.py)
+        return routine
     if follow := _volume_follow_up(t, last_reply):
         return follow
     # A whole-utterance WhatsApp send is checked before the refusals, so a
