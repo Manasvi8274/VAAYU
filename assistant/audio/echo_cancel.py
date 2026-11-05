@@ -26,6 +26,7 @@ _ref_end = 0.0  # when the last piece stopped: its echo still rings for TAIL sec
 TAIL = 0.6  # calibration knob (seconds)
 _apm = None
 _failed = False
+_clock: float | None = None  # the mic's own sample clock (callbacks arrive in bursts; counting samples doesn't jitter)
 OUTPUT_DELAY_MS = 180  # calibration knob: speaker output latency here (sounddevice reported 0.18 s)
 
 
@@ -83,7 +84,12 @@ def _reference(n: int, now: float) -> np.ndarray:
 
 def clean(frame: np.ndarray, now: float | None = None) -> np.ndarray:
     """One int16 16 kHz mic frame (a multiple of 10 ms) with Vaayu's voice taken out."""
-    now = time.perf_counter() if now is None else now
+    if now is None:
+        global _clock
+        t, step = time.perf_counter(), len(frame) / RATE
+        # re-anchored when it drifts from the real clock (a sound card's clock is off by ~0.01%)
+        _clock = t if _clock is None or abs(_clock + step - t) > 0.1 else _clock + step
+        now = _clock
     if _ref is None and now > _ref_end + TAIL:
         return frame  # Vaayu is quiet: the mic as is (measured: AEC3 can swallow speech with no echo to cancel)
     apm = _module()
