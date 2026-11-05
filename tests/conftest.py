@@ -223,6 +223,8 @@ def _no_real_claude_thinking():
         mp.setattr(places, "_launch", lambda cmd: None)
         from assistant import proactive  # the user's proactive switches: never changed by a test
         mp.setattr(proactive, "PATH", agent.LOG.parent / "test_proactive.json")
+        from assistant import phone  # the user's Telegram bot: never reached from a test
+        mp.setattr(phone, "CONFIG", agent.LOG.parent / "test_telegram.json")
         from assistant import routines  # the user's own routines: never changed by a test
         mp.setattr(routines, "PATH", agent.LOG.parent / "test_routines.json")
         from assistant.tools import screen_memory

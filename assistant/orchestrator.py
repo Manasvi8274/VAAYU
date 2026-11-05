@@ -254,6 +254,7 @@ def ack_now(text: str) -> bool:
         return False
 
 
+_TURN_LOCK = threading.Lock()
 _YES = ["Yes?", "Yes, tell me.", "I'm listening.", "Go ahead."]
 
 
@@ -566,7 +567,8 @@ class Orchestrator:
         if pending:  # a whole command said while cutting Vaayu off - do it, don't make them repeat it
             self._busy = True
             try:
-                self._handle_utterance(None, heard=pending)
+                with _TURN_LOCK:
+                    self._handle_utterance(None, heard=pending)
             finally:
                 self._busy = False
             return
@@ -577,9 +579,39 @@ class Orchestrator:
         music.user_is_speaking()  # the conversation goes on: a held song stays paused
         self._busy = True
         try:
-            self._handle_utterance(audio)
+            with _TURN_LOCK:  # one turn at a time - a phone command may be running (assistant/phone.py)
+                self._handle_utterance(audio)
         finally:
             self._busy = False
+
+    def handle_remote(self, text: str, confirm, audio=None) -> str:
+        """A command typed or sent as a voice note on the phone (assistant/phone.py): the same brain and the same
+        Guardian rules as a spoken one, answered in text - not said aloud at home."""
+        from assistant import learned
+        from assistant.llm import router
+        from assistant.llm.ollama_client import is_hindi
+        with _TURN_LOCK:
+            if audio is not None and is_hindi(text) and hasattr(self.stt, "translate") and not router.fast_route(text):
+                try:
+                    english = self.stt.translate(audio)
+                except Exception:
+                    english = ""
+                if english:
+                    text, self.brain.reply_in_hindi = english, True
+            self.messages.append({"role": "user", "content": text})
+            self.brain.trace = []
+            try:
+                reply, self.messages = self.brain.respond(self.messages, registry, confirm=confirm)
+                failed = False
+            except Exception as exc:
+                interaction_log.log_error("handle_remote", exc, text=text)
+                reply, failed = f"Sorry, that went wrong: {exc}", True
+            self.messages = _trim_history(self.messages)
+            memory.log_turn(text, reply)
+            if not failed:
+                learned.from_turn(text, self.brain.trace)
+            interaction_log.log_event("remote_turn", text=text, reply=reply, trace=self.brain.trace)
+            return reply
 
     def _handle_utterance(self, audio, heard: str | None = None) -> None:
         with Timer() as stt_time:
@@ -746,7 +778,10 @@ class Orchestrator:
         threading.Thread(target=memory.index_past_talk, daemon=True, name="memory-backfill").start()
         from assistant import agent, proactive
         agent.ANNOUNCE = self._speak
-        proactive.start(self._speak, busy=lambda: self._busy)  # welcome backs, breaks, late nights - if turned on  # a background job's "Done with your task. ..."
+        proactive.start(self._speak, busy=lambda: self._busy)  # welcome backs, breaks, late nights - if turned on
+        from assistant import phone  # the phone (Telegram), if the user made a bot - data/telegram.json
+        from assistant.tools import screen
+        phone.TelegramBridge(self.handle_remote, stt=self.stt, screenshot=screen._grab_full).start()  # a background job's "Done with your task. ..."
         from assistant import research
         research.start(self.config, self.brain.client)  # reads about their topics while idle
         from assistant.llm import translate  # Hindi replies: the translator loaded now, not on the first one
