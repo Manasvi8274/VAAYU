@@ -218,7 +218,11 @@ def ack_for(text: str, n: int = 0) -> str:
             except (KeyError, IndexError):
                 steps.append("on it")
         return "On it: " + ", then ".join(steps) + "."
-    from assistant.llm.ollama_client import is_hindi
+    from assistant.llm.ollama_client import is_hindi as _hindi
+    from assistant.tts.kokoro_engine import hindi_voice_ready
+
+    def is_hindi(t):  # no Hindi voice: the English ack ("A second brother." is what translating gave)
+        return _hindi(t) and hindi_voice_ready()
     if routed and routed[0] == "tools" and routed[1][0][0] == "think_hard":
         return "मुझे ठीक से सोचने दो।" if is_hindi(text) else "Let me think about that properly."
     if (slow := _slow_step(routed)) and not is_hindi(text):

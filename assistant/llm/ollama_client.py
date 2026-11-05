@@ -146,6 +146,11 @@ _HINDI_WORDS = re.compile(r"\b(?:hai|hain|kya|aap|aapko|ko|ka|ki|ke|mein|nahi|ka
 # that wrote good Hindi took ~28 s (a model swap on the 4 GB GPU) - so the 3B answers in English and the reply is
 # translated (respond -> assistant/llm/translate.py).
 _DEVANAGARI = re.compile(r"[ऀ-ॿ]")
+
+
+def _hindi_voice_ready() -> bool:
+    from assistant.tts.kokoro_engine import hindi_voice_ready
+    return hindi_voice_ready()
 # Few-shot turns: told only in words, the 3B model answered Hinglish in Devanagari. Its Roman
 # Hinglish was tested too (and after training on Claude-written Hinglish): fluent-sounding but
 # meaningless, so Hinglish is understood and answered in plain English (prompts.BROTHER_PROMPT).
@@ -425,7 +430,7 @@ class OllamaBrain:
                 reply, messages = self._respond(messages, tool_registry, confirm)
         finally:
             self._hindi_turn = False
-        if hindi and not _DEVANAGARI.search(reply):
+        if hindi and not _DEVANAGARI.search(reply) and _hindi_voice_ready():  # no Hindi voice: answered in English
             from assistant.llm import translate
             self.trace.append({"path": "translate", "to": "hi"})
             reply = translate.to_hindi(reply)

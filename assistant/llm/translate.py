@@ -14,7 +14,7 @@ import threading
 from pathlib import Path
 
 MODEL = Path(__file__).resolve().parent.parent.parent / "models" / "nllb"
-_SENTENCES = re.compile(r"(?<=[.!?])\s+")
+_SENTENCES = re.compile(r"(?<=[.!?।])\s+")
 _lock = threading.Lock()
 _loaded: dict = {}
 
@@ -39,6 +39,15 @@ def warm_up() -> None:
 
 def to_hindi(text: str) -> str:
     """The reply in Hindi (Devanagari); the English as it was if the translator isn't there."""
+    return _translate(text, "eng_Latn", "hin_Deva")
+
+
+def to_english(text: str) -> str:
+    """Hindi -> English: said in English when the Hindi voice can't load (kokoro_engine). As it was on failure."""
+    return _translate(text, "hin_Deva", "eng_Latn")
+
+
+def _translate(text: str, source: str, target: str) -> str:
     sentences = [s for s in _SENTENCES.split((text or "").strip()) if s]
     if not sentences:
         return text
@@ -46,6 +55,6 @@ def to_hindi(text: str) -> str:
         tr, sp = _model()
     except Exception:
         return text
-    batch = [sp.encode(s, out_type=str) + ["</s>", "eng_Latn"] for s in sentences]
-    out = tr.translate_batch(batch, target_prefix=[["hin_Deva"]] * len(batch), beam_size=2, max_decoding_length=200)
+    batch = [sp.encode(s, out_type=str) + ["</s>", source] for s in sentences]
+    out = tr.translate_batch(batch, target_prefix=[[target]] * len(batch), beam_size=2, max_decoding_length=200)
     return " ".join(sp.decode(o.hypotheses[0][1:]) for o in out)

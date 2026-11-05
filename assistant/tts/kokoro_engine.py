@@ -59,7 +59,8 @@ VOICES = {"echo": "am_echo", "lewis": "bm_lewis", "george": "bm_george", "daniel
           "puck": "am_puck", "heart": "af_heart", "emma": "bf_emma"}
 # Hindi (user, 2026-11-04: "I want Vaayu to speak in Hindi also"): a sentence in Devanagari is spoken with Kokoro's
 # own Hindi voice - measured: Whisper large-v3 read hm_omega/hm_psi/hf_alpha back almost word for word.
-HINDI_VOICE = "hm_omega"  # Kokoro's Hindi - used only if the native Hindi voice below can't load
+# User (2026-11-05): "remove the Hindi fallback - if Piper does not make Hindi then respond in English, I do not
+# want Hindi of Kokoro". So Kokoro never speaks Hindi: with no Piper voice a Hindi sentence is said in English.
 # User (2026-11-05): "I do not like his Hindi accent, I want the real Hindi accent". Kokoro's Hindi comes from
 # pronunciation rules; Piper's Hindi voices are trained on native Hindi speakers (models/piper, rhasspy/piper-voices)
 # and are 4x faster (0.33 s for 6 s of speech, CPU). "Vaayu, Hindi voice Rohan" switches (data/voice_hi.txt).
@@ -88,6 +89,16 @@ def _saved_hindi_voice() -> str:
         return "pratham"  # calibration knob: the default native Hindi voice
 
 
+def hindi_voice_ready() -> bool:
+    """Piper and the chosen Hindi voice are here - and, once the running engine tried, it did load."""
+    import importlib.util
+    name = _saved_hindi_voice()
+    tried = getattr(ACTIVE, "_piper_voice", None) if ACTIVE is not None else None
+    if tried and tried[0] == name:
+        return tried[1] is not None
+    return importlib.util.find_spec("piper") is not None and (PIPER_DIR / f"hi_IN-{name}-medium.onnx").exists()
+
+
 class KokoroEngine(TTSEngine):
     def __init__(self, voice: str = "hm_psi", speed: float = 1.05, device: str = "cpu"):
         import onnxruntime as ort
@@ -108,7 +119,7 @@ class KokoroEngine(TTSEngine):
         ACTIVE = self
 
     def _piper(self):
-        """The native Hindi voice (loaded on first Hindi sentence); None if it isn't there - Kokoro's then."""
+        """The native Hindi voice (loaded on first Hindi sentence); None if it isn't there - English then."""
         name = _saved_hindi_voice()
         if getattr(self, "_piper_voice", (None, None))[0] != name:
             try:
@@ -136,15 +147,19 @@ class KokoroEngine(TTSEngine):
         if text in self._cache:
             return self._cache[text]
         hindi = bool(_DEVANAGARI.search(text))
-        if hindi and (piper := self._piper()):
+        if hindi and not (piper := self._piper()):
+            from assistant.llm import translate
+            english = translate.to_english(text)  # never Kokoro's Hindi
+            text, hindi = (english, False) if not _DEVANAGARI.search(english) else ("", False)
+        if hindi:
             said = text
             for word, spoken in _HINDI_SAY.items():
                 said = said.replace(word, spoken)
             samples = np.concatenate([c.audio_float_array for c in piper.synthesize(said)] or [np.zeros(1)])
             rate = piper.config.sample_rate
         else:
-            samples, rate = self.kokoro.create(text, voice=HINDI_VOICE if hindi else self.voice, speed=self.speed,
-                                               lang="hi" if hindi else "en-us")
+            samples, rate = (self.kokoro.create(text, voice=self.voice, speed=self.speed, lang="en-us") if text
+                             else (np.zeros(1, np.float32), 24000))
         out = np.asarray(samples, dtype=np.float32), rate
         if len(text) <= _CACHE_MAX_CHARS:  # short, repeatable replies ("Playing.", "Opened Brave.")
             if len(self._cache) >= _CACHE_SIZE:

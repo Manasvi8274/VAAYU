@@ -47,3 +47,37 @@ def test_hindi_voice_can_be_switched_by_voice(monkeypatch, tmp_path):
     assert router.fast_route("hindi voice rohan") == ("tools", [("set_voice", {"voice": "rohan"})])
     assert voice.set_voice("rohan") == "Okay, my Hindi voice is now Rohan."
     assert kokoro_engine._saved_hindi_voice() == "rohan" and engine._cache == {"Hello.": 2}  # old Hindi audio dropped
+
+
+def test_no_hindi_voice_means_english_never_kokoros_hindi(monkeypatch):
+    # User (2026-11-05): "if Piper does not make Hindi then respond in English - I do not want Hindi of Kokoro".
+    import numpy as np
+    from unittest.mock import MagicMock
+    from assistant.llm import translate
+    from assistant.tts import kokoro_engine
+    engine = kokoro_engine.KokoroEngine.__new__(kokoro_engine.KokoroEngine)
+    engine._cache, engine.voice, engine.speed = {}, "am_echo", 1.0
+    engine.kokoro = MagicMock()
+    engine.kokoro.create.return_value = (np.zeros(10, np.float32), 24000)
+    monkeypatch.setattr(engine, "_piper", lambda: None)
+    monkeypatch.setattr(translate, "to_english", lambda text: "One second, brother.")
+    engine._synth("एक सेकंड भाई।")
+    engine.kokoro.create.assert_called_once_with("One second, brother.", voice="am_echo", speed=1.0, lang="en-us")
+    monkeypatch.setattr(translate, "to_english", lambda text: text)  # no translator either: silence, not Kokoro's Hindi
+    engine._synth("कुछ और।")
+    assert engine.kokoro.create.call_count == 1
+
+
+def test_no_hindi_voice_means_the_reply_stays_english(monkeypatch):
+    from unittest.mock import patch
+    from assistant.llm import ollama_client
+    from assistant.llm.ollama_client import OllamaBrain
+    with patch("assistant.llm.ollama_client.ollama.Client"):
+        brain = OllamaBrain(host="http://fake", model="m")
+    monkeypatch.setattr(ollama_client, "_hindi_voice_ready", lambda: False)
+    monkeypatch.setattr(brain, "_chat", lambda messages, said: ("Bhai, all good here.", messages))
+    brain.reply_in_hindi = True
+    from assistant.llm import translate
+    monkeypatch.setattr(translate, "to_hindi", lambda text: "सब ठीक है।")
+    reply, _ = brain.respond([{"role": "user", "content": "how are you"}], None)
+    assert reply == "Bhai, all good here."
