@@ -1136,7 +1136,7 @@ def fast_route(text: str, last_reply: str = ""):
     command, or None to fall back to the LLM. Deliberately conservative:
     a miss only costs LLM latency, a wrong hit does the wrong thing.
     last_reply: Vaayu's previous reply ("Music volume is now 70%." makes "reduce it to 20" the song's)."""
-    routed = _fast_route(to_roman(text), last_reply) or _route_learned(to_roman(text)) \
+    routed = _route_meeting(text) or _fast_route(to_roman(text), last_reply) or _route_learned(to_roman(text)) \
         or _route_screen(normalize(to_roman(text)))
     if routed and routed[0] == "tools" and any(n == "play_music" and _NO_NAME.search(a.get("query", ""))
                                                for n, a in routed[1]):
@@ -1158,6 +1158,31 @@ _CLICK_SCREEN = re.compile(r"^(?:click|tap)(?: on)? (?P<t>(?:the |that |this )?.
 
 _ON_A_PAGE = re.compile(r"\b(?:on|in) (?:youtube|the (?:web ?)?page|this page|the (?:web)?site|google|the browser|"
                         r"chrome|brave|edge|firefox)\b", re.I)
+
+
+_JOIN_MEETING = re.compile(r"^(?:please )?(?:join|attend|hold my (?:place|seat) in)(?: the| my| this| that)? "
+                           r"(?:meeting|meet|call|google meet)(?: (?:link )?(?:i copied|from (?:my |the )?clipboard|for me))?"
+                           r"(?: at (?P<t>.+))?$", re.I)
+_ARRIVED = re.compile(r"^(?:i'?m here|i am here|i'?ve joined|i have joined|i'?ve arrived|i'?m in(?: the meeting)?|"
+                      r"(?:summari[sz]e|recap) the meeting|what did i miss(?: in the meeting)?|"
+                      r"stop (?:taking )?(?:the )?(?:meeting )?notes)$", re.I)
+
+
+def _route_meeting(text: str):
+    """A Meet link (from the phone) or 'join the meeting I copied' (assistant/meeting.py) - on the raw text, so the link
+    survives; 'I'm here' only while Vaayu is in a meeting for the user."""
+    from assistant import meeting
+    raw = (text or "").strip()
+    if link := meeting.MEET_LINK.search(raw):
+        rest = normalize(meeting.MEET_LINK.sub("", raw))
+        when = re.search(r"\bat (\d{1,2}(?::\d{2})? ?(?:am|pm)?)\b", rest, re.I)
+        return ("tools", [("join_meeting", {"link": link.group(0), "time": when.group(1) if when else ""})])
+    t = normalize(to_roman(raw))
+    if m := _JOIN_MEETING.match(t):
+        return ("tools", [("join_meeting", {"link": "", "time": (m.group("t") or "").strip()})])
+    if meeting._state and _ARRIVED.match(t):
+        return ("tools", [("meeting_summary", {})])
+    return None
 
 
 def _route_learned(text: str):
@@ -1412,7 +1437,7 @@ DIRECT_REPLY_TOOLS = {
     "get_new_ability", "daily_briefing", "set_reminder", "design_image", "design_logo", "design_poster", "design_diagram", "design_presentation",
     "design_document", "add_task", "complete_task", "make_plan", "plan_my_day", "think_deeply", "think_hard", "list_tasks",
     "do_task", "task_status", "look_at_screen", "click_on_screen", "open_settings_page", "open_folder", "open_in_vscode",
-    "set_proactive",
+    "set_proactive", "join_meeting", "meeting_summary",
 }
 
 

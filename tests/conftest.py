@@ -225,6 +225,8 @@ def _no_real_claude_thinking():
         mp.setattr(proactive, "PATH", agent.LOG.parent / "test_proactive.json")
         from assistant import phone  # the user's Telegram bot: never reached from a test
         mp.setattr(phone, "CONFIG", agent.LOG.parent / "test_telegram.json")
+        from assistant import meeting  # meeting notes: never written to the real folder by a test
+        mp.setattr(meeting, "DIR", agent.LOG.parent / "test_meetings")
         from assistant import routines  # the user's own routines: never changed by a test
         mp.setattr(routines, "PATH", agent.LOG.parent / "test_routines.json")
         from assistant.tools import screen_memory

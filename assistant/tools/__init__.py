@@ -12,6 +12,7 @@ from assistant.tools import (  # noqa: F401
     dictation,
     files,
     media,
+    meeting_tools,
     names,
     screen,
     network_status,
