@@ -18,6 +18,11 @@ from assistant.tools.registry import registry
 
 MODEL = "sonnet"   # calibration knob: "haiku" answers in about the same time on this laptop
 TIMEOUT = 90
+# Measured 2026-11-05: `claude -p` took 7.4 s for a 3-word answer, almost all of it starting up (MCP servers, plugins,
+# skills); with these 4.3 s. (--bare would be 2.1 s, but it skips the Pro login - API keys only, which we never use.)
+# Streaming the answer was measured too: its first words came only 1.7 s before the end - not worth it.
+_LEAN = ["--strict-mcp-config", "--setting-sources", "user", "--disable-slash-commands", "--no-session-persistence",
+         "--tools", ""]
 _LIMIT = re.compile(r"usage limit|rate limit|hit your .*limit", re.I)
 
 
@@ -43,7 +48,7 @@ def ask_claude(prompt: str) -> str | None:
     try:
         # the prompt on stdin: `claude` is a .cmd on Windows, and a line break in an argument cut it off there
         # (live: Claude answered "I didn't catch your question")
-        run = subprocess.run([claude, "-p", "--model", MODEL, "--output-format", "text"], input=prompt,
+        run = subprocess.run([claude, "-p", "--model", MODEL, "--output-format", "text", *_LEAN], input=prompt,
                              capture_output=True, text=True, encoding="utf-8", errors="replace",
                              timeout=TIMEOUT, cwd=tempfile.gettempdir(),
                              creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0), env=dict(os.environ))
