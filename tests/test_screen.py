@@ -38,3 +38,42 @@ def test_what_is_clicked_is_judged_like_any_click():
     assert tier("click_on_screen", {"target": "Pay now"}) == DANGEROUS
     assert tier("click_on_screen", {"target": "Send"}) == OUTWARD
     assert tier("click_on_screen", {"target": "the second video"}) == CHANGE
+
+
+def _screen_with_button(x, y, seed=0):
+    import numpy as np
+    rng = np.random.default_rng(seed)
+    g = np.full((540, 960), 240, np.float32) + rng.normal(0, 2, (540, 960)).astype(np.float32)
+    g[y - 12:y + 12, x - 30:x + 30] = 60  # a dark button...
+    g[y - 4:y + 4, x - 20:x + 10] = 250   # ...with a light label
+    return g
+
+
+def test_a_button_seen_once_is_clicked_from_memory_then_found_again_when_it_moves(tmp_path, monkeypatch):
+    # User (2026-11-05): "recognise my button positions which rarely change - Claude only when he doesn't know".
+    from assistant.tools import screen_memory as sm
+    monkeypatch.setattr(sm, "PATH", tmp_path / "targets.json")
+    g = _screen_with_button(300, 200)
+    sm.remember("notepad.exe", "the Save button", g, 300, 200)
+    assert sm.recall("notepad.exe", "save", g) == (300, 200)          # same spot, same look: at once
+    moved = sm.recall("notepad.exe", "save button", _screen_with_button(620, 410, seed=1))
+    assert moved is not None and abs(moved[0] - 620) <= 2 and abs(moved[1] - 410) <= 2  # window moved: found
+    assert sm.recall("notepad.exe", "save", _screen_with_button(620, 410)) == moved      # ...and remembered there
+    blank = _screen_with_button(300, 200) * 0 + 240
+    assert sm.recall("notepad.exe", "save", blank) is None              # gone: Claude looks again
+    assert sm.recall("chrome.exe", "save", g) is None                   # per app
+
+
+def test_clicking_uses_memory_before_asking(monkeypatch, tmp_path):
+    from PIL import Image
+    from assistant.tools import screen_memory as sm
+    monkeypatch.setattr(sm, "PATH", tmp_path / "targets.json")
+    img = Image.fromarray(_screen_with_button(300, 200).astype("uint8"))
+    monkeypatch.setattr(screen, "_grab_full", lambda: img)
+    monkeypatch.setattr(sm, "foreground_app", lambda: "notepad.exe")
+    asked, clicks = [], []
+    monkeypatch.setattr(screen, "find_on_screen", lambda t, thumb, full: asked.append(t) or (300, 200))
+    monkeypatch.setattr(screen, "_click", lambda x, y: clicks.append((x, y)))
+    screen.click_on_screen("save")
+    screen.click_on_screen("save")
+    assert asked == ["save"] and clicks == [(300, 200), (300, 200)]  # Claude once, memory the second time

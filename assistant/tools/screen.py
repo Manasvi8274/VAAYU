@@ -32,13 +32,17 @@ WIDTH = 1280
 _DIR = Path(tempfile.gettempdir()) / "vaayu-screen"  # only the screenshot is in here, deleted after each look
 
 
-def _grab():
+def _grab_full():
     from PIL import ImageGrab
     try:
         ctypes.windll.user32.SetProcessDPIAware()  # real pixels, so a click lands where it was seen
     except (AttributeError, OSError):
         pass
-    img = ImageGrab.grab()
+    return ImageGrab.grab()
+
+
+def _grab():
+    img = _grab_full()
     full = img.size
     img.thumbnail((WIDTH, WIDTH))
     return img, full
@@ -134,8 +138,16 @@ def find_on_screen(target: str, img=None, full=None) -> tuple[int, int] | None:
     parameters={"type": "object", "properties": {"target": {"type": "string"}}, "required": ["target"]},
 )
 def click_on_screen(target: str) -> str:
-    where = find_on_screen(target)
+    from assistant.tools import screen_memory as sm
+    img = _grab_full()
+    app, g = sm.foreground_app(), sm.gray(img)
+    where = sm.recall(app, target, g)  # seen here before: ~0.1 s, no screenshot leaves the laptop
     if where is None:
-        raise RuntimeError(f"I can't see {target} on the screen.")
+        thumb = img.copy()
+        thumb.thumbnail((WIDTH, WIDTH))
+        where = find_on_screen(target, thumb, img.size)
+        if where is None:
+            raise RuntimeError(f"I can't see {target} on the screen.")
+        sm.remember(app, target, g, *where)
     _click(*where)
     return f"Clicked {target}."

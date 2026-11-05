@@ -215,7 +215,9 @@ def _no_real_claude_thinking():
         mp.setattr(agent, "_local_plan", lambda prompt: '{"done": "Local plan."}')
         mp.setattr(agent, "LOG", agent.LOG.parent / "test_agent_jobs.jsonl")
         from assistant.tools import screen  # the screen: never grabbed, looked at, or clicked from a test
-        mp.setattr(screen, "_grab", lambda: (_ for _ in ()).throw(RuntimeError("no screen in tests")))
+        mp.setattr(screen, "_grab_full", lambda: (_ for _ in ()).throw(RuntimeError("no screen in tests")))
+        from assistant.tools import screen_memory
+        mp.setattr(screen_memory, "PATH", agent.LOG.parent / "test_screen_targets.json")
         mp.setattr(screen, "_ask_local", lambda img, prompt: "Local look.")
         mp.setattr(screen, "_click", lambda x, y: None)
         yield
